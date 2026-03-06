@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+.DS_Store
+.venv/
+build/
+dist/
+
+FLAtlas-Savegame-Editor-*.spec
+release/
