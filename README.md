@@ -5,7 +5,7 @@ Standalone editor for **Freelancer** singleplayer save files (`*.fl`).
 Developed by **Aldenmar Odin - flathack**.
 
 ## Version
-- Current: `v0.1.0`
+- Current: `v0.1.1`
 
 ## Core Features
 - Open and edit Freelancer savegames with `nickname - in-game name` display where available
@@ -80,6 +80,10 @@ python build.py --clean --mode onedir
 
 Artifacts are written to:
 - `dist/`
+
+Release bundles currently provided:
+- Linux: `FLAtlas-Savegame-Editor-v0.1.1-linux-x86_64.tar.gz`
+- Windows: `FLAtlas-Savegame-Editor-v0.1.1-windows-onedir.zip`
 
 ## Configuration
 Local config file:

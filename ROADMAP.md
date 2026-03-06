@@ -1,13 +1,14 @@
 # FL Atlas - Savegame Editor
 
-## Current Status (v0.1.0)
+## Current Status (v0.1.1)
 - Standalone savegame editor is running with menu bar, path settings, language switch, theme switch, and help menu.
-- Savegame load/save flow is stable with backup creation (`.FLAtlasBAK`) and delayed write-until-save behavior.
+- Savegame load/save flow is stable with backup creation (`.FLAtlasBAK`), status logging, and delayed write-until-save behavior.
 - Map tabs (`Locked Gates`, `Visited`) are integrated and theme-aware.
 - Reputation tab includes template application and neutral template.
 - Ship tab includes hardpoint-aware filtering and AutoFix.
 - `Check savegame` validates key sections and now also applies hardpoint AutoFix in the same action.
-- Manual update check now always returns a result message (update available, up to date, or check failed).
+- Manual update check now always returns a result message (`update available`, `up to date`, or `check failed`).
+- Release packaging is available for both Linux and Windows.
 
 ## Open Issues
 - Validation can still report many unresolved numeric IDs depending on mod data completeness and hash mapping coverage.
@@ -24,16 +25,20 @@
 - Config reset action removes local config file after confirmation.
 - Explicit update-check feedback messages for manual checks.
 - Theme-adaptive map palette for better contrast in light themes.
+- Savegame status updates and backup target logging in `FLAtlas-Change.log`.
+- Linux and Windows release bundles for `v0.1.1`.
 
 ### Changed
 - README updated to match current standalone scope and feature set.
 - Savegame validation flow now includes automatic hardpoint cleanup.
+- Startup/version handling now resolves `APP_VERSION` from the shared version module.
 
 ### Fixed
 - Dark map rendering on bright themes.
 - Missing user feedback when no update was available.
+- Several savegame editor stability and UX issues included in `v0.1.1`.
 
-## Next Release Goals (target: v0.1.1)
+## Next Release Goals (target: v0.1.2)
 - Add optional strict pre-save validation mode with blocker warnings.
 - Add clear validation result breakdown by category with counts.
 - Add map legend (locked, visited, unknown) for both map tabs.
@@ -47,5 +52,5 @@
 - Add compatibility presets for `Customize Trent`.
 
 ## Long-Term Goals
-- Build clean standalone release bundles for Linux and Windows.
 - Add optional crash-report helper export for reproducible bug reports.
+- Keep Linux and Windows release automation aligned across both targets.
