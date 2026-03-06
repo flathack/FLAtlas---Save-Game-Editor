@@ -74,7 +74,9 @@ def main() -> int:
         "--windowed",
     ]
     if ICON_FILE.exists():
-        pyinstaller_cmd.extend(["--icon", str(ICON_FILE)])
+        icon_suffix = ICON_FILE.suffix.lower()
+        if (not sys.platform.startswith("win")) or icon_suffix in {".ico", ".exe"}:
+            pyinstaller_cmd.extend(["--icon", str(ICON_FILE)])
     if args.mode == "onefile":
         pyinstaller_cmd.append("--onefile")
     else:

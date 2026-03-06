@@ -22,11 +22,13 @@ import shutil
 from pathlib import Path
 from typing import Dict
 
+from .user_paths import user_config_dir
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 _BUNDLED_FILE = Path(__file__).with_name("translations.json")
-_USER_DIR = Path.home() / ".config" / "fl_editor"
+_USER_DIR = user_config_dir()
 _USER_FILE = _USER_DIR / "translations.json"
 
 # ---------------------------------------------------------------------------

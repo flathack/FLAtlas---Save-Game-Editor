@@ -1,9 +1,10 @@
 """Persistente Konfiguration (~/.config/fl_editor/config.json)."""
 
 import json
-from pathlib import Path
 
-CONFIG_PATH = Path.home() / ".config" / "fl_editor" / "config.json"
+from .user_paths import user_config_dir
+
+CONFIG_PATH = user_config_dir() / "config.json"
 
 
 class Config:
@@ -22,8 +23,12 @@ class Config:
 
     def set(self, key: str, value):
         self._d[key] = value
-        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        CONFIG_PATH.write_text(
-            json.dumps(self._d, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        try:
+            CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            CONFIG_PATH.write_text(
+                json.dumps(self._d, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception:
+            # Keep runtime settings in memory even if persistence is unavailable.
+            pass
