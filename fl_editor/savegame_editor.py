@@ -345,6 +345,20 @@ def _close_startup_splash(app: QApplication | None = None) -> None:
         inst.setProperty("flatlas_savegame_splash", None)
 
 
+class _DialogCloseEventGuard(QObject):
+    def __init__(self, owner: QDialog, on_close_request):
+        super().__init__(owner)
+        self._owner = owner
+        self._on_close_request = on_close_request
+
+    def eventFilter(self, watched, event):
+        if watched is self._owner and event.type() == QEvent.Close:
+            if not bool(self._on_close_request()):
+                event.ignore()
+                return True
+        return False
+
+
 class _SavegameKnownMapView(QGraphicsView):
     """Known-Objects map view with auto-fit and mouse-wheel zoom."""
 
@@ -1760,7 +1774,7 @@ def open_savegame_editor(self):
             dlg.setWindowTitle(base)
 
     _set_editor_title(None)
-    _close_guard = _CloseEventGuard(dlg)
+    _close_guard = _DialogCloseEventGuard(dlg, _confirm_close_with_unsaved_changes)
     dlg.installEventFilter(_close_guard)
 
     save_paths_cfg_raw = str(self._cfg.get("settings.savegame_path", "") or "").strip()
@@ -3750,18 +3764,6 @@ def open_savegame_editor(self):
             _save()
             return not _has_unsaved_changes()
         return box.clickedButton() is close_btn_local
-
-    class _CloseEventGuard(QObject):
-        def __init__(self, owner: QDialog):
-            super().__init__(owner)
-            self._owner = owner
-
-        def eventFilter(self, watched, event):
-            if watched is self._owner and event.type() == QEvent.Close:
-                if not _confirm_close_with_unsaved_changes():
-                    event.ignore()
-                    return True
-            return False
 
     def _parse_savegame(path: Path) -> tuple[bool, str]:
         _set_loading_progress(2)
