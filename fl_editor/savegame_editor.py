@@ -16,7 +16,7 @@ import webbrowser
 from urllib import request as urlrequest, error as urlerror
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QPointF, QRectF, QTimer
+from PySide6.QtCore import Qt, QPointF, QRectF, QTimer, QObject, QEvent
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QIcon, QPixmap, QActionGroup
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -408,12 +408,14 @@ class _SavegameEditorHost(QMainWindow):
     def __init__(self):
         super().__init__()
         self._cfg = Config()
-        lang = str(self._cfg.get("settings.language", "") or "").strip()
-        if lang:
-            try:
-                set_language(lang)
-            except Exception:
-                pass
+        lang = str(self._cfg.get("settings.language", "") or "").strip().lower()
+        langs = [str(v).strip().lower() for v in available_languages() if str(v).strip()]
+        if (not lang) or (lang not in langs):
+            lang = "en" if "en" in langs else (langs[0] if langs else "en")
+        try:
+            set_language(lang)
+        except Exception:
+            pass
         self._parser = FLParser()
         self._cached_factions: list[str] = []
         self._faction_label_to_nick: dict[str, str] = {}
@@ -450,57 +452,68 @@ class _SavegameEditorHost(QMainWindow):
         return self._primary_game_path()
 
     def _default_savegame_editor_dir(self) -> Path:
+        dirs = self._default_savegame_editor_dirs()
+        if dirs:
+            return dirs[0]
+        return Path.home()
+
+    def _default_savegame_editor_dirs(self) -> list[Path]:
+        probed_dirs = self._probe_savegame_editor_dirs()
+        if probed_dirs:
+            return probed_dirs
         probed = self._probe_savegame_editor_dir()
         if isinstance(probed, Path):
-            return probed
+            return [probed]
         cfg_dir = str(self._cfg.get("settings.savegame_path", "") or "").strip()
-        if cfg_dir:
-            p = Path(cfg_dir)
-            if p.exists():
-                return p
-        if os.name == "nt":
-            userprofile = str(os.environ.get("USERPROFILE", "") or "").strip()
-            if userprofile:
-                p = Path(userprofile) / "Documents" / "My Games" / "Freelancer" / "Accts" / "SinglePlayer"
-                if p.exists():
-                    return p
-        p = Path.home() / "Documents" / "My Games" / "Freelancer" / "Accts" / "SinglePlayer"
-        if p.exists():
-            return p
-        return Path.home()
+        if cfg_dir and not self._is_placeholder_path(cfg_dir):
+            cfg_dirs = self._canonical_savegame_dirs_from_input(cfg_dir)
+            existing_cfg = [p for p in cfg_dirs if p.exists() and p.is_dir()]
+            if existing_cfg:
+                return existing_cfg
+        for docs_dir in self._windows_documents_dirs():
+            for game_dir in ("Freelancer", "FreelancerHDE"):
+                p = docs_dir / "My Games" / game_dir / "Accts" / "SinglePlayer"
+                if p.exists() and p.is_dir():
+                    return [p]
+        return []
 
     def _default_savegame_editor_game_path(self) -> str:
         probed = self._probe_savegame_editor_game_path()
         if isinstance(probed, Path):
             return str(probed)
         cfg_path = str(self._cfg.get("settings.savegame_game_path", "") or "").strip()
-        if cfg_path and Path(cfg_path).exists():
+        if cfg_path and (not self._is_placeholder_path(cfg_path)) and Path(cfg_path).exists():
             return cfg_path
         return ""
 
     def _probe_savegame_editor_dir(self) -> Path | None:
+        dirs = self._probe_savegame_editor_dirs()
+        if dirs:
+            return dirs[0]
+        return None
+
+    def _probe_savegame_editor_dirs(self) -> list[Path]:
         cfg_dir = str(self._cfg.get("settings.savegame_path", "") or "").strip()
         candidates: list[Path] = []
-        if cfg_dir:
-            candidates.append(self._canonical_savegame_dir_from_input(cfg_dir))
-        userprofile = str(os.environ.get("USERPROFILE", "") or "").strip()
-        if userprofile:
-            candidates.append(Path(userprofile) / "Documents" / "My Games" / "Freelancer" / "Accts" / "SinglePlayer")
-            candidates.append(Path(userprofile) / "OneDrive" / "Documents" / "My Games" / "Freelancer" / "Accts" / "SinglePlayer")
-        candidates.append(Path.home() / "Documents" / "My Games" / "Freelancer" / "Accts" / "SinglePlayer")
+        if cfg_dir and not self._is_placeholder_path(cfg_dir):
+            candidates.extend(self._canonical_savegame_dirs_from_input(cfg_dir))
+        for docs_dir in self._windows_documents_dirs():
+            candidates.append(docs_dir / "My Games" / "Freelancer" / "Accts" / "SinglePlayer")
+            candidates.append(docs_dir / "My Games" / "FreelancerHDE" / "Accts" / "SinglePlayer")
         candidates = self._dedupe_paths(candidates)
+        out: list[Path] = []
         for cand in candidates:
             try:
                 if cand.exists() and cand.is_dir():
-                    return cand
+                    out.append(cand)
             except Exception:
                 continue
-        return None
+        return self._dedupe_paths(out)
 
     def _probe_savegame_editor_game_path(self) -> Path | None:
         candidates: list[Path] = []
         cfg_path = str(self._cfg.get("settings.savegame_game_path", "") or "").strip()
-        if cfg_path:
+        if cfg_path and not self._is_placeholder_path(cfg_path):
             candidates.append(self._canonical_game_dir_from_input(cfg_path))
         if os.name == "nt":
             pf = str(os.environ.get("ProgramFiles", "") or "").strip()
@@ -554,6 +567,50 @@ class _SavegameEditorHost(QMainWindow):
             return Path(expanded)
         except Exception:
             return Path(txt)
+
+    @staticmethod
+    def _is_placeholder_path(raw_path: str) -> bool:
+        txt = str(raw_path or "").strip()
+        return txt in {"", ".", ".\\", "./"}
+
+    def _split_savegame_paths_text(self, raw_paths: str) -> list[str]:
+        raw = str(raw_paths or "").strip()
+        if not raw:
+            return []
+        out: list[str] = []
+        for part in raw.split(";"):
+            txt = str(part or "").strip()
+            if txt and (not self._is_placeholder_path(txt)):
+                out.append(txt)
+        return out
+
+    def _canonical_savegame_dirs_from_input(self, raw_paths: str) -> list[Path]:
+        out: list[Path] = []
+        for raw in self._split_savegame_paths_text(raw_paths):
+            out.append(self._canonical_savegame_dir_from_input(raw))
+        return self._dedupe_paths(out)
+
+    def _savegame_dirs_to_text(self, dirs: list[Path]) -> str:
+        cleaned = self._dedupe_paths([Path(str(p).strip()) for p in list(dirs or []) if str(p).strip()])
+        return ";".join(str(p) for p in cleaned)
+
+    def _windows_documents_dirs(self) -> list[Path]:
+        if os.name != "nt":
+            return [Path.home() / "Documents"]
+        candidates: list[Path] = []
+        userprofile = str(os.environ.get("USERPROFILE", "") or "").strip()
+        home = str(Path.home()).strip()
+        if userprofile:
+            up = Path(userprofile)
+            candidates.append(up / "Documents")
+            candidates.append(up / "OneDrive" / "Documents")
+        if home:
+            candidates.append(Path(home) / "Documents")
+        for var in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial"):
+            base = str(os.environ.get(var, "") or "").strip()
+            if base:
+                candidates.append(Path(base) / "Documents")
+        return self._dedupe_paths(candidates)
 
     @staticmethod
     def _dedupe_paths(paths: list[Path]) -> list[Path]:
@@ -1224,6 +1281,7 @@ class _SavegameEditorHost(QMainWindow):
 
     def _sp_starter_equipment_by_type(self, root: Path) -> dict[str, list[str]]:
         by_type: dict[str, set[str]] = {}
+        skip_sections = {"good", "package", "basegood", "marketgood"}
         for fp in self._iter_equipment_ini_paths_for_usage(str(root)):
             try:
                 sections = self._parser.parse(str(fp))
@@ -1234,9 +1292,84 @@ class _SavegameEditorHost(QMainWindow):
                 if not nick:
                     continue
                 typ = str(sec_name or "").strip().lower()
+                if typ in skip_sections:
+                    continue
                 if typ:
                     by_type.setdefault(typ, set()).add(nick)
         return {k: sorted(v, key=str.lower) for k, v in by_type.items()}
+
+    def _savegame_editor_collect_core_component_nicks(self, game_path: str) -> dict[str, list[str]]:
+        out: dict[str, list[str]] = {
+            "power": [],
+            "engine": [],
+            "scanner": [],
+            "tractor": [],
+        }
+        gp = str(game_path or "").strip()
+        if not gp:
+            return out
+        root = Path(gp)
+        if not root.exists():
+            return out
+
+        section_map: dict[str, str] = {
+            "power": "power",
+            "engine": "engine",
+            "scanner": "scanner",
+            "tractor": "tractor",
+        }
+        files_with_sections = [
+            ("DATA/EQUIPMENT/misc_equip.ini", {"power", "scanner", "tractor"}),
+            ("DATA/EQUIPMENT/engine_equip.ini", {"engine"}),
+        ]
+        acc: dict[str, set[str]] = {k: set() for k in out.keys()}
+        for rel, allowed_sections in files_with_sections:
+            fp = ci_resolve(root, rel)
+            if not fp or not fp.is_file():
+                continue
+            try:
+                sections = self._parser.parse(str(fp))
+            except Exception:
+                continue
+            for sec_name, entries in sections:
+                sec = str(sec_name or "").strip().lower()
+                key = section_map.get(sec, "")
+                if not key or key not in allowed_sections:
+                    continue
+                nick = self._entry_get_value(entries, "nickname").strip()
+                if nick:
+                    acc.setdefault(key, set()).add(nick)
+        for k in out.keys():
+            out[k] = sorted(acc.get(k, set()), key=str.lower)
+        return out
+
+    def _savegame_editor_goods_source_by_equip_nick(self, root: Path) -> dict[str, str]:
+        out: dict[str, str] = {}
+        equip_dir = ci_resolve(root, "DATA/EQUIPMENT")
+        if not equip_dir or not equip_dir.is_dir():
+            return out
+        goods_files = ("st_good.ini", "weapon_good.ini", "misc_good.ini")
+        for fname in goods_files:
+            fp = ci_resolve(equip_dir, fname)
+            if not fp or not fp.is_file():
+                continue
+            try:
+                sections = self._parser.parse(str(fp))
+            except Exception:
+                continue
+            src = fname.lower()
+            for sec_name, entries in sections:
+                if str(sec_name or "").strip().lower() != "good":
+                    continue
+                cat = self._entry_get_value(entries, "category").strip().lower()
+                if cat and cat != "equipment":
+                    continue
+                equip_nick = self._entry_get_value(entries, "equipment").strip()
+                if not equip_nick:
+                    equip_nick = self._entry_get_value(entries, "nickname").strip()
+                if equip_nick:
+                    out.setdefault(equip_nick.lower(), src)
+        return out
 
     def _sp_starter_item_display_names(self, root: Path) -> dict[str, str]:
         out: dict[str, str] = {}
@@ -1291,7 +1424,9 @@ class _SavegameEditorHost(QMainWindow):
             "ship_hardpoints_by_nick": {},
             "ship_hp_types_by_hardpoint_by_nick": {},
             "equip_type_by_nick": {},
+            "equip_source_file_by_nick": {},
             "equip_hp_types_by_nick": {},
+            "equip_goods_source_by_nick": {},
             "hash_to_nick": {},
         }
         if not gp:
@@ -1313,7 +1448,20 @@ class _SavegameEditorHost(QMainWindow):
         ship_hardpoints_by_nick: dict[str, list[str]] = {}
         ship_hp_types_by_hardpoint_by_nick: dict[str, dict[str, list[str]]] = {}
         equip_type_by_nick: dict[str, str] = {}
+        equip_source_file_by_nick: dict[str, str] = {}
         equip_hp_types_by_nick: dict[str, list[str]] = {}
+        equip_goods_source_by_nick: dict[str, str] = self._savegame_editor_goods_source_by_equip_nick(root_path)
+
+        def _expand_hp_type_aliases(hp_type: str) -> set[str]:
+            raw = str(hp_type or "").strip().lower()
+            if not raw:
+                return set()
+            out_aliases = {raw}
+            if raw == "hp_torpedo_special":
+                out_aliases.update({"hp_torpedo_special_1", "hp_torpedo_special_2"})
+            elif raw in {"hp_torpedo_special_1", "hp_torpedo_special_2"}:
+                out_aliases.add("hp_torpedo_special")
+            return out_aliases
         shiparch_ini = ci_resolve(root_path, "DATA/SHIPS/shiparch.ini")
         if shiparch_ini and shiparch_ini.is_file():
             try:
@@ -1343,7 +1491,7 @@ class _SavegameEditorHost(QMainWindow):
                                 hp_seen.add(hp_key)
                                 hp_list.append(hp)
                             if hp_type:
-                                hp_type_map_tmp.setdefault(hp_key, set()).add(hp_type)
+                                hp_type_map_tmp.setdefault(hp_key, set()).update(_expand_hp_type_aliases(hp_type))
                     ship_hardpoints_by_nick[nick.lower()] = hp_list
                     if hp_type_map_tmp:
                         ship_hp_types_by_hardpoint_by_nick[nick.lower()] = {
@@ -1368,20 +1516,27 @@ class _SavegameEditorHost(QMainWindow):
                     sections = self._parser.parse(str(fp))
                 except Exception:
                     continue
+                src_name = str(fp.name or "").strip().lower()
                 for _sec_name, entries in sections:
+                    sec_l = str(_sec_name or "").strip().lower()
+                    if sec_l in {"good", "package", "basegood", "marketgood"}:
+                        continue
                     nick = self._entry_get_value(entries, "nickname").strip()
                     if not nick:
                         continue
                     key = nick.lower()
+                    if key and key not in equip_source_file_by_nick and src_name:
+                        equip_source_file_by_nick[key] = src_name
                     hp_set = hp_tmp.setdefault(key, set())
                     for k, v in entries:
-                        if str(k or "").strip().lower() != "hp_type":
+                        key_l = str(k or "").strip().lower()
+                        if key_l not in {"hp_type", "hp_gun_type"}:
                             continue
                         parts = [x.strip() for x in str(v or "").split(",")]
                         for part in parts:
                             hp = str(part or "").strip().lower()
                             if hp:
-                                hp_set.add(hp)
+                                hp_set.update(_expand_hp_type_aliases(hp))
             equip_hp_types_by_nick = {k: sorted(v, key=str.lower) for k, v in hp_tmp.items() if v}
         except Exception:
             pass
@@ -1446,7 +1601,9 @@ class _SavegameEditorHost(QMainWindow):
             "ship_hardpoints_by_nick": dict(ship_hardpoints_by_nick),
             "ship_hp_types_by_hardpoint_by_nick": dict(ship_hp_types_by_hardpoint_by_nick),
             "equip_type_by_nick": dict(equip_type_by_nick),
+            "equip_source_file_by_nick": dict(equip_source_file_by_nick),
             "equip_hp_types_by_nick": dict(equip_hp_types_by_nick),
+            "equip_goods_source_by_nick": dict(equip_goods_source_by_nick),
             "hash_to_nick": dict(hash_to_nick),
         }
         if cache_key:
@@ -1545,6 +1702,7 @@ class _SavegameEditorHost(QMainWindow):
 
 def open_savegame_editor(self):
     default_dir = self._default_savegame_editor_dir()
+    default_dirs = self._default_savegame_editor_dirs()
     default_game_path = self._default_savegame_editor_game_path()
     game_path = str(default_game_path or self._primary_game_path() or self._fallback_game_path() or "").strip()
     faction_labels = self._savegame_editor_load_faction_labels(game_path)
@@ -1602,8 +1760,13 @@ def open_savegame_editor(self):
             dlg.setWindowTitle(base)
 
     _set_editor_title(None)
+    _close_guard = _CloseEventGuard(dlg)
+    dlg.installEventFilter(_close_guard)
 
-    save_dir_edit = QLineEdit(str(default_dir))
+    save_paths_cfg_raw = str(self._cfg.get("settings.savegame_path", "") or "").strip()
+    save_paths_cfg = self._canonical_savegame_dirs_from_input(save_paths_cfg_raw)
+    save_paths_initial = save_paths_cfg or default_dirs or ([default_dir] if str(default_dir).strip() else [])
+    save_dir_edit = QLineEdit(self._savegame_dirs_to_text(save_paths_initial))
     game_path_edit = QLineEdit(game_path)
 
     savegame_cb = QComboBox(dlg)
@@ -1762,7 +1925,7 @@ def open_savegame_editor(self):
             "text_empty": QColor("#a7a7a7"),
         }
 
-    map_colors: dict[str, QColor] = _map_colors_for_theme(self._cfg.get("settings.theme", "Light"))
+    map_colors: dict[str, QColor] = _map_colors_for_theme(self._cfg.get("settings.theme", "Dark"))
 
     def _apply_map_theme(theme_name: str) -> None:
         nonlocal map_colors
@@ -1770,7 +1933,7 @@ def open_savegame_editor(self):
         locked_scene.setBackgroundBrush(QBrush(map_colors["bg"]))
         visited_scene.setBackgroundBrush(QBrush(map_colors["bg"]))
 
-    _apply_map_theme(self._cfg.get("settings.theme", "Light"))
+    _apply_map_theme(self._cfg.get("settings.theme", "Dark"))
 
     tpl_row = QHBoxLayout()
     tpl_row.addWidget(QLabel(tr("savegame_editor.template")))
@@ -1804,10 +1967,23 @@ def open_savegame_editor(self):
     equip_type_by_nick: dict[str, str] = {
         str(k): str(v) for k, v in dict(item_data.get("equip_type_by_nick", {}) or {}).items()
     }
+    equip_source_file_by_nick: dict[str, str] = {
+        str(k): str(v).lower() for k, v in dict(item_data.get("equip_source_file_by_nick", {}) or {}).items()
+    }
     equip_hp_types_by_nick: dict[str, list[str]] = {
         str(k): list(v) for k, v in dict(item_data.get("equip_hp_types_by_nick", {}) or {}).items()
     }
+    equip_goods_source_by_nick: dict[str, str] = {
+        str(k): str(v).lower() for k, v in dict(item_data.get("equip_goods_source_by_nick", {}) or {}).items()
+    }
+    ship_light_addons_by_ship_cache: dict[str, list[tuple[str, str, str]]] = {}
+    ship_light_cache_loaded = {"done": False}
     hash_to_nick: dict[int, str] = {int(k): str(v) for k, v in dict(item_data.get("hash_to_nick", {}) or {}).items()}
+    core_component_nicks = self._savegame_editor_collect_core_component_nicks(game_path)
+    power_nicks = list(core_component_nicks.get("power", []) or [])
+    engine_nicks = list(core_component_nicks.get("engine", []) or [])
+    scanner_nicks = list(core_component_nicks.get("scanner", []) or [])
+    tractor_nicks = list(core_component_nicks.get("tractor", []) or [])
     jump_data = self._savegame_editor_collect_jump_connections(game_path)
 
     trent_form = QFormLayout()
@@ -1841,6 +2017,18 @@ def open_savegame_editor(self):
     ship_archetype_cb = QComboBox(dlg)
     ship_archetype_cb.setEditable(True)
     ship_form.addRow(tr("savegame_editor.ship_archetype"), ship_archetype_cb)
+    core_power_cb = QComboBox(dlg)
+    core_engine_cb = QComboBox(dlg)
+    core_scanner_cb = QComboBox(dlg)
+    core_tractor_cb = QComboBox(dlg)
+    core_component_cbs = [core_power_cb, core_engine_cb, core_scanner_cb, core_tractor_cb]
+    for cb in core_component_cbs:
+        cb.setEditable(True)
+        cb.setProperty("fl_extra", "1")
+    ship_form.addRow("Power", core_power_cb)
+    ship_form.addRow("Engine", core_engine_cb)
+    ship_form.addRow("Scanner", core_scanner_cb)
+    ship_form.addRow("Tractor", core_tractor_cb)
     ship_l.addLayout(ship_form)
     hardpoint_hint_lbl = QLabel("", dlg)
     hardpoint_hint_lbl.setWordWrap(True)
@@ -1869,6 +2057,25 @@ def open_savegame_editor(self):
 
     cargo_lbl = QLabel(tr("savegame_editor.cargo"), dlg)
     ship_l.addWidget(cargo_lbl)
+    fixed_cargo_row = QWidget(dlg)
+    fixed_cargo_l = QHBoxLayout(fixed_cargo_row)
+    fixed_cargo_l.setContentsMargins(0, 0, 0, 0)
+    fixed_cargo_l.setSpacing(8)
+    fixed_battery_lbl = QLabel("ShieldBattery (ge_s_battery_01):", dlg)
+    fixed_battery_spin = QSpinBox(dlg)
+    fixed_battery_spin.setRange(0, 9999)
+    fixed_battery_spin.setValue(0)
+    fixed_repair_lbl = QLabel("RepairKit (ge_s_repair_01):", dlg)
+    fixed_repair_spin = QSpinBox(dlg)
+    fixed_repair_spin.setRange(0, 9999)
+    fixed_repair_spin.setValue(0)
+    fixed_cargo_l.addWidget(fixed_battery_lbl)
+    fixed_cargo_l.addWidget(fixed_battery_spin)
+    fixed_cargo_l.addSpacing(14)
+    fixed_cargo_l.addWidget(fixed_repair_lbl)
+    fixed_cargo_l.addWidget(fixed_repair_spin)
+    fixed_cargo_l.addStretch(1)
+    ship_l.addWidget(fixed_cargo_row)
     cargo_tbl = QTableWidget(0, 2, dlg)
     cargo_tbl.setHorizontalHeaderLabels([tr("savegame_editor.col.item"), tr("savegame_editor.col.amount")])
     ch = cargo_tbl.horizontalHeader()
@@ -1931,6 +2138,8 @@ def open_savegame_editor(self):
         "visit_line_by_id": {},
         "story_locked": False,
         "bulk_loading": False,
+        "last_ship_nick": "",
+        "baseline_signature": None,
     }
     map_state: dict[str, object] = {"locked_ids": set(), "visit_ids": set()}
 
@@ -1950,6 +2159,8 @@ def open_savegame_editor(self):
         state["locked_ids"] = set()
         state["visit_ids"] = set()
         state["visit_line_by_id"] = {}
+        state["last_ship_nick"] = ""
+        state["baseline_signature"] = None
         rank_spin.setValue(0)
         money_spin.setValue(0)
         description_edit.clear()
@@ -1963,6 +2174,12 @@ def open_savegame_editor(self):
             cb.setEditText("")
         ship_archetype_cb.setCurrentIndex(-1)
         ship_archetype_cb.setEditText("")
+        for cb in core_component_cbs:
+            cb.setCurrentIndex(-1)
+            cb.setEditText("")
+            cb.setProperty("fl_extra", "1")
+        fixed_battery_spin.setValue(0)
+        fixed_repair_spin.setValue(0)
         equip_tbl.setRowCount(0)
         cargo_tbl.setRowCount(0)
         houses_tbl.setRowCount(0)
@@ -1984,6 +2201,12 @@ def open_savegame_editor(self):
             lh_cb,
             rh_cb,
             ship_archetype_cb,
+            core_power_cb,
+            core_engine_cb,
+            core_scanner_cb,
+            core_tractor_cb,
+            fixed_battery_spin,
+            fixed_repair_spin,
             equip_tbl,
             cargo_tbl,
             houses_tbl,
@@ -2021,6 +2244,12 @@ def open_savegame_editor(self):
             lh_cb,
             rh_cb,
             ship_archetype_cb,
+            core_power_cb,
+            core_engine_cb,
+            core_scanner_cb,
+            core_tractor_cb,
+            fixed_battery_spin,
+            fixed_repair_spin,
             equip_tbl,
             cargo_tbl,
             houses_tbl,
@@ -2061,11 +2290,14 @@ def open_savegame_editor(self):
         load_progress.setValue(max(0, min(100, int(value))))
         QApplication.processEvents()
 
-    def _save_dir() -> Path:
+    def _save_dirs() -> list[Path]:
         txt = save_dir_edit.text().strip()
-        if txt:
-            return self._canonical_savegame_dir_from_input(txt)
-        return default_dir
+        dirs = self._canonical_savegame_dirs_from_input(txt)
+        if dirs:
+            return dirs
+        if default_dirs:
+            return list(default_dirs)
+        return [default_dir]
 
     def _token_to_known_nick(token: str) -> str:
         raw = str(token or "").strip()
@@ -2368,13 +2600,19 @@ def open_savegame_editor(self):
 
     def _setup_item_combo(cb: QComboBox, nicks: list[str]) -> None:
         cb.setEditable(True)
+        cb.addItem("", "")
         for nick in nicks:
             cb.addItem(_item_ui_label(nick), nick)
 
     def _set_item_combo_value(cb: QComboBox, nick: str) -> None:
         val = _resolve_item_nick(str(nick or "").strip())
         if not val:
-            cb.setCurrentText("")
+            idx_empty = cb.findData("")
+            if idx_empty >= 0:
+                cb.setCurrentIndex(idx_empty)
+            else:
+                cb.setCurrentIndex(-1)
+            cb.setEditText("")
             return
         idx = cb.findData(val)
         if idx >= 0:
@@ -2385,9 +2623,15 @@ def open_savegame_editor(self):
 
     def _combo_item_nick(cb: QComboBox) -> str:
         data = str(cb.currentData() or "").strip()
+        if data == "":
+            return ""
+        if cb.currentIndex() < 0:
+            txt = _item_from_ui(cb.currentText())
+            return _resolve_item_nick(txt) if txt else ""
         if data:
             return _resolve_item_nick(data)
-        return _resolve_item_nick(_item_from_ui(cb.currentText()))
+        txt = _item_from_ui(cb.currentText())
+        return _resolve_item_nick(txt) if txt else ""
 
     def _item_token_for_save(nick: str) -> str:
         raw = _resolve_item_nick(str(nick or "").strip())
@@ -2419,21 +2663,234 @@ def open_savegame_editor(self):
         vals = list(equip_hp_types_by_nick.get(str(nick or "").strip().lower(), []) or [])
         return {str(v).strip().lower() for v in vals if str(v).strip()}
 
+    def _equip_goods_source(nick: str) -> str:
+        return str(equip_goods_source_by_nick.get(str(nick or "").strip().lower(), "") or "").strip().lower()
+
+    def _equip_source_file(nick: str) -> str:
+        return str(equip_source_file_by_nick.get(str(nick or "").strip().lower(), "") or "").strip().lower()
+
+    def _equip_has_hp_type_prefix(nick: str, prefixes: tuple[str, ...]) -> bool:
+        vals = _equip_hp_types(nick)
+        pref = tuple(str(p or "").strip().lower() for p in prefixes if str(p or "").strip())
+        if not pref:
+            return False
+        for hp_t in vals:
+            t = str(hp_t or "").strip().lower()
+            if any(t.startswith(p) for p in pref):
+                return True
+        return False
+
+    def _filter_equip_candidates(
+        cands: list[str],
+        *,
+        source_file: str = "",
+        equip_type: str = "",
+        hp_type_prefixes: tuple[str, ...] = (),
+    ) -> list[str]:
+        out: list[str] = []
+        src = str(source_file or "").strip().lower()
+        typ = str(equip_type or "").strip().lower()
+        pref = tuple(str(v or "").strip().lower() for v in hp_type_prefixes if str(v or "").strip())
+        for n in list(cands or []):
+            if src and _equip_source_file(n) != src:
+                continue
+            if typ and _equip_type(n) != typ:
+                continue
+            if pref and (not _equip_has_hp_type_prefix(n, pref)):
+                continue
+            out.append(n)
+        return out
+
+    def _core_component_key_for_item(raw_item: str) -> str:
+        nick = _resolve_item_nick(str(raw_item or "").strip())
+        typ = _equip_type(nick)
+        if typ == "power":
+            return "power"
+        if typ == "engine":
+            return "engine"
+        if typ == "scanner":
+            return "scanner"
+        if typ == "tractor":
+            return "tractor"
+        return ""
+
+    def _load_ship_light_addons_from_goods() -> None:
+        if bool(ship_light_cache_loaded.get("done", False)):
+            return
+        ship_light_cache_loaded["done"] = True
+        ship_light_addons_by_ship_cache.clear()
+        gp = str(game_path or "").strip()
+        if not gp:
+            return
+        goods_ini = self._resolve_game_path_case_insensitive(gp, "DATA/EQUIPMENT/goods.ini")
+        if not goods_ini or not goods_ini.is_file():
+            return
+        package_rows: dict[str, list[tuple[str, str, str]]] = {}
+        ship_to_package_candidates: dict[str, list[str]] = {}
+        try:
+            sections = self._parser.parse(str(goods_ini))
+        except Exception:
+            return
+        for sec_name, entries in sections:
+            sec = str(sec_name or "").strip().lower()
+            if sec == "package":
+                pack_nick = self._entry_get_value(entries, "nickname").strip()
+                if not pack_nick:
+                    continue
+                addons: list[tuple[str, str, str]] = []
+                for k, v in entries:
+                    if str(k or "").strip().lower() != "addon":
+                        continue
+                    parts = [x.strip() for x in str(v or "").split(",")]
+                    if not parts or not parts[0]:
+                        continue
+                    item = str(parts[0] or "").strip()
+                    hp = str(parts[1] or "").strip() if len(parts) > 1 else ""
+                    if hp and re.match(r"^[+-]?\d+(\.\d+)?$", hp):
+                        hp = ""
+                    extra = ", ".join(parts[2:]).strip() if len(parts) > 2 else "1"
+                    addons.append((item, hp, extra))
+                if addons:
+                    package_rows[pack_nick.lower()] = addons
+            elif sec == "good":
+                good_nick = self._entry_get_value(entries, "nickname").strip()
+                ship_nick = self._entry_get_value(entries, "ship").strip()
+                category = self._entry_get_value(entries, "category").strip().lower()
+                hull_nick = self._entry_get_value(entries, "hull").strip()
+                if (not ship_nick) and category in {"ship", "shiphull"} and good_nick:
+                    ship_nick = good_nick
+                if (not ship_nick) and hull_nick.lower().endswith("_hull"):
+                    ship_nick = hull_nick[:-5]
+                if not ship_nick:
+                    continue
+                ship_key = ship_nick.lower()
+                cands = ship_to_package_candidates.setdefault(ship_key, [])
+                for k, v in entries:
+                    kl = str(k or "").strip().lower()
+                    if kl not in {"addon", "equipment", "package"}:
+                        continue
+                    first = str(v or "").split(",", 1)[0].strip()
+                    if first:
+                        cands.append(first)
+                if good_nick:
+                    cands.append(f"{good_nick}_package")
+                cands.append(f"{ship_nick}_package")
+        keep_hp_prefixes = ("hplight", "hprunninglight", "hpfx", "hpcontrail")
+        keep_types = {"light", "attachedfx", "internalfx", "contrail", "engine"}
+        for ship_key, cands in ship_to_package_candidates.items():
+            seen_pack: set[str] = set()
+            selected_rows: list[tuple[str, str, str]] = []
+            for cand in cands:
+                pk = str(cand or "").strip().lower()
+                if not pk or pk in seen_pack:
+                    continue
+                seen_pack.add(pk)
+                rows = list(package_rows.get(pk, []) or [])
+                if rows:
+                    selected_rows = rows
+                    break
+            if not selected_rows:
+                continue
+            lights: list[tuple[str, str, str]] = []
+            seen_rows: set[tuple[str, str]] = set()
+            for item, hp, extra in selected_rows:
+                item_n = str(item or "").strip()
+                hp_n = str(hp or "").strip()
+                if not item_n:
+                    continue
+                hp_l = hp_n.lower()
+                typ = _equip_type(item_n)
+                is_light = hp_l.startswith(keep_hp_prefixes) or typ in keep_types
+                if not is_light:
+                    continue
+                key = (item_n.lower(), hp_l)
+                if key in seen_rows:
+                    continue
+                seen_rows.add(key)
+                lights.append((item_n, hp_n, str(extra or "").strip()))
+            if lights:
+                ship_light_addons_by_ship_cache[ship_key] = lights
+
+    def _ship_light_addons(ship_nick: str) -> list[tuple[str, str, str]]:
+        _load_ship_light_addons_from_goods()
+        return list(ship_light_addons_by_ship_cache.get(str(ship_nick or "").strip().lower(), []) or [])
+
+    def _is_ship_light_row(item_nick: str, hardpoint: str) -> bool:
+        hp_l = str(hardpoint or "").strip().lower()
+        keep_hp_prefixes = ("hplight", "hprunninglight", "hpfx", "hpcontrail")
+        keep_types = {"light", "attachedfx", "internalfx", "contrail", "engine"}
+        if hp_l.startswith(keep_hp_prefixes):
+            return True
+        return _equip_type(item_nick) in keep_types
+
+    def _replace_ship_lights_for_ship_switch(prev_ship: str, new_ship: str) -> None:
+        old_ship = str(prev_ship or "").strip()
+        next_ship = str(new_ship or "").strip()
+        if not next_ship:
+            return
+        if old_ship.lower() == next_ship.lower():
+            return
+        removed_any = False
+        for r in range(equip_tbl.rowCount() - 1, -1, -1):
+            item_cb = equip_tbl.cellWidget(r, 0)
+            hp_w = equip_tbl.cellWidget(r, 1)
+            if not isinstance(item_cb, QComboBox):
+                continue
+            item_n = _combo_item_nick(item_cb)
+            hp_n = _hardpoint_from_widget(hp_w)
+            if _is_ship_light_row(item_n, hp_n):
+                equip_tbl.removeRow(r)
+                removed_any = True
+        add_rows = _ship_light_addons(next_ship)
+        if add_rows:
+            ship_hps = {str(v).strip().lower() for v in _ship_hardpoints(next_ship) if str(v).strip()}
+            existing = {(i.lower(), h.lower()) for i, h, _x in _equip_rows() if i and h}
+            added = 0
+            for item_n, hp_n, extra in add_rows:
+                hp = str(hp_n or "").strip()
+                if not hp:
+                    continue
+                hp_l = hp.lower()
+                if ship_hps and hp_l not in ship_hps and (not hp_l.startswith(("hplight", "hprunninglight", "hpfx", "hpcontrail"))):
+                    continue
+                pair = (str(item_n).strip().lower(), hp_l)
+                if pair in existing:
+                    continue
+                existing.add(pair)
+                _add_equip_row(item_n, hp, extra or "1", defer_refresh=True)
+                added += 1
+
     def _typed_filter_for_hardpoint(hardpoint: str, candidates: list[str]) -> list[str]:
         hp = str(hardpoint or "").strip().lower()
         if not hp:
             return list(candidates)
         out = list(candidates)
         if hp.startswith("hpshield"):
-            out = [n for n in out if _equip_type(n) == "shieldgenerator"]
+            out = _filter_equip_candidates(out, source_file="st_equip.ini", equip_type="shieldgenerator")
         elif hp.startswith("hpthruster"):
-            out = [n for n in out if _equip_type(n) == "thruster"]
+            out = _filter_equip_candidates(out, source_file="st_equip.ini", equip_type="thruster")
         elif hp.startswith("hpcountermeasure") or hp.startswith("hpcm"):
-            out = [n for n in out if _equip_type(n) == "countermeasuredropper"]
+            out = _filter_equip_candidates(out, source_file="misc_equip.ini", equip_type="countermeasuredropper")
+        elif hp.startswith("hpturret"):
+            out = _filter_equip_candidates(
+                out,
+                source_file="weapon_equip.ini",
+                hp_type_prefixes=("hp_turret", "hp_turret_special"),
+            )
+        elif hp.startswith("hpweapon"):
+            out = _filter_equip_candidates(
+                out,
+                source_file="weapon_equip.ini",
+                hp_type_prefixes=("hp_gun_special", "hp_gun"),
+            )
         elif hp.startswith("hpmine"):
-            out = [n for n in out if _equip_type(n) == "minedropper"]
+            out = _filter_equip_candidates(out, source_file="weapon_equip.ini", equip_type="minedropper")
         elif hp.startswith("hptorpedo"):
-            out = [n for n in out if _equip_type(n) in {"gun", "cgun"}]
+            out = _filter_equip_candidates(
+                out,
+                source_file="weapon_equip.ini",
+                hp_type_prefixes=("hp_torpedo_special",),
+            )
         return out
 
     def _ship_hp_types_for_hardpoint(ship_nick: str, hardpoint: str) -> set[str]:
@@ -2465,7 +2922,7 @@ def open_savegame_editor(self):
             return by_hpname
         return _typed_filter_for_hardpoint(hp, list(equip_nicks))
 
-    def _set_hardpoint_combo_value(cb: QComboBox, hardpoint: str) -> None:
+    def _set_hardpoint_combo_value(cb: QComboBox, hardpoint: str, *, add_missing: bool = True) -> None:
         val = str(hardpoint or "").strip()
         if not val:
             idx_empty = cb.findData("")
@@ -2477,6 +2934,14 @@ def open_savegame_editor(self):
             return
         idx = cb.findData(val)
         if idx < 0:
+            if not add_missing:
+                idx_empty = cb.findData("")
+                if idx_empty >= 0:
+                    cb.setCurrentIndex(idx_empty)
+                else:
+                    cb.setCurrentIndex(-1)
+                    cb.setEditText("")
+                return
             cb.addItem(val, val)
             idx = cb.count() - 1
         cb.setCurrentIndex(idx)
@@ -2517,6 +2982,10 @@ def open_savegame_editor(self):
         )
 
     _setup_item_combo(ship_archetype_cb, ship_nicks)
+    _setup_item_combo(core_power_cb, power_nicks)
+    _setup_item_combo(core_engine_cb, engine_nicks)
+    _setup_item_combo(core_scanner_cb, scanner_nicks)
+    _setup_item_combo(core_tractor_cb, tractor_nicks)
     _setup_item_combo(com_body_cb, trent_body_nicks or trent_nicks or equip_nicks)
     _setup_item_combo(body_cb, trent_body_nicks or trent_nicks or equip_nicks)
     _setup_item_combo(com_head_cb, trent_head_nicks or trent_nicks or equip_nicks)
@@ -2823,19 +3292,44 @@ def open_savegame_editor(self):
         hp_cb.addItem("", "")
         for hp in ship_hp_opts:
             hp_cb.addItem(hp, hp)
-        _set_hardpoint_combo_value(hp_cb, cur_hp)
+        _set_hardpoint_combo_value(hp_cb, cur_hp, add_missing=False)
         hp_cb.blockSignals(False)
         selected_hp = _hardpoint_from_widget(hp_cb)
         opts = _compatible_equip_nicks_for_hardpoint(selected_hp)
         item_cb.blockSignals(True)
         item_cb.clear()
         _setup_item_combo(item_cb, opts)
+        force_empty = bool(item_cb.property("fl_force_empty"))
         if cur_item:
             _set_item_combo_value(item_cb, cur_item)
+            item_cb.setProperty("fl_force_empty", False)
+        elif force_empty:
+            _set_item_combo_value(item_cb, "")
         else:
-            item_cb.setCurrentIndex(-1)
-            item_cb.setEditText("")
+            _set_item_combo_value(item_cb, "")
         item_cb.blockSignals(False)
+        if not cur_item and force_empty:
+            # Keep intentionally empty rows empty; do not auto-fill.
+            _set_item_combo_value(item_cb, "")
+
+    def _debug_hardpoint_candidates(hardpoint: str, candidates: list[str]) -> None:
+        hp = str(hardpoint or "").strip()
+        if not hp:
+            return
+        counts: dict[str, int] = {}
+        for nick in candidates:
+            src = _equip_source_file(nick) or "?"
+            counts[src] = int(counts.get(src, 0)) + 1
+        src_txt = ", ".join(f"{k}:{v}" for k, v in sorted(counts.items(), key=lambda x: x[0].lower())) or "-"
+        msg = f"HP Debug [{hp}] -> {len(candidates)} candidates ({src_txt})"
+        try:
+            self.statusBar().showMessage(msg, 8000)
+        except Exception:
+            pass
+        try:
+            print(msg)
+        except Exception:
+            pass
 
     def _refresh_equip_row_filters_for_widget(w: QWidget | None) -> None:
         row = _table_row_for_widget(equip_tbl, w, 0)
@@ -2846,6 +3340,10 @@ def open_savegame_editor(self):
     def _refresh_equip_row_filters_for_hp_widget(w: QWidget | None) -> None:
         row = _table_row_for_widget(equip_tbl, w, 1)
         if row >= 0:
+            hp_w = equip_tbl.cellWidget(row, 1)
+            hp = _hardpoint_from_widget(hp_w)
+            if hp:
+                _debug_hardpoint_candidates(hp, _compatible_equip_nicks_for_hardpoint(hp))
             _refresh_equip_row_filters(row)
             _refresh_hardpoint_hint()
 
@@ -2855,6 +3353,7 @@ def open_savegame_editor(self):
         item_cb = QComboBox(dlg)
         _setup_item_combo(item_cb, equip_nicks)
         item_cb.setProperty("fl_extra", str(extra or "").strip())
+        item_cb.setProperty("fl_force_empty", (not str(item_nick or "").strip()))
         equip_tbl.setCellWidget(row, 0, item_cb)
         hp_cb = QComboBox(dlg)
         hp_cb.setEditable(False)
@@ -2868,10 +3367,15 @@ def open_savegame_editor(self):
         hp_cb.currentTextChanged.connect(lambda _txt, w=hp_cb: _refresh_equip_row_filters_for_hp_widget(w))
         if item_nick:
             _set_item_combo_value(item_cb, item_nick)
+            item_cb.setProperty("fl_force_empty", False)
+        else:
+            _set_item_combo_value(item_cb, "")
         if not defer_refresh:
             _refresh_equip_row_filters(row)
             if item_nick:
                 _refresh_equip_row_filters(row)
+            else:
+                _set_item_combo_value(item_cb, "")
             _refresh_hardpoint_hint()
 
     def _add_cargo_row(item_nick: str = "", amount: int = 1, extra: str = ", , 0") -> None:
@@ -2897,6 +3401,8 @@ def open_savegame_editor(self):
             nick = _combo_item_nick(item_cb)
             if not nick:
                 continue
+            if _core_component_key_for_item(nick) in {"power", "engine", "scanner", "tractor"}:
+                continue
             hp = _hardpoint_from_widget(hp_w)
             extra = str(item_cb.property("fl_extra") or "").strip()
             out.append((nick, hp, extra))
@@ -2921,6 +3427,74 @@ def open_savegame_editor(self):
         for r in range(equip_tbl.rowCount()):
             _refresh_equip_row_filters(r)
         _refresh_hardpoint_hint()
+
+    def _ensure_empty_hardpoint_rows_for_ship(ship_nick: str) -> None:
+        ship = str(ship_nick or "").strip()
+        if not ship:
+            return
+        hp_list = _ship_hardpoints(ship)
+        if not hp_list:
+            return
+        relevant_prefixes = (
+            "hpweapon",
+            "hpturret",
+            "hptorpedo",
+            "hpmine",
+            "hpcountermeasure",
+            "hpcm",
+            "hpthruster",
+            "hpshield",
+        )
+        present: set[str] = set()
+        for r in range(equip_tbl.rowCount()):
+            hp = _hardpoint_from_widget(equip_tbl.cellWidget(r, 1))
+            if hp:
+                present.add(hp.lower())
+        for hp in hp_list:
+            hp_l = str(hp or "").strip().lower()
+            if not hp_l or hp_l in present:
+                continue
+            if not hp_l.startswith(relevant_prefixes):
+                continue
+            _add_equip_row("", hp, "1", defer_refresh=True)
+            present.add(hp_l)
+
+    def _clear_invalid_hardpoints_for_ship(ship_nick: str) -> int:
+        invalid_pairs = set(_collect_invalid_hardpoint_rows(ship_nick, _equip_rows()))
+        if not invalid_pairs:
+            return 0
+        fixed = 0
+        for r in range(equip_tbl.rowCount()):
+            item_cb = equip_tbl.cellWidget(r, 0)
+            hp_w = equip_tbl.cellWidget(r, 1)
+            if not isinstance(item_cb, QComboBox):
+                continue
+            item_nick = _combo_item_nick(item_cb)
+            hp = _hardpoint_from_widget(hp_w)
+            if not hp:
+                continue
+            if (item_nick, hp) not in invalid_pairs:
+                continue
+            if isinstance(hp_w, QComboBox):
+                _set_hardpoint_combo_value(hp_w, "", add_missing=False)
+            elif isinstance(hp_w, QLineEdit):
+                hp_w.setText("")
+            fixed += 1
+        return fixed
+
+    def _on_ship_changed() -> None:
+        prev_ship = str(state.get("last_ship_nick", "") or "").strip()
+        new_ship = _current_ship_nick()
+        if bool(state.get("bulk_loading", False)):
+            state["last_ship_nick"] = new_ship
+            _refresh_equip_hardpoint_choices()
+            return
+        if new_ship and new_ship.lower() != prev_ship.lower():
+            _replace_ship_lights_for_ship_switch(prev_ship, new_ship)
+            _clear_invalid_hardpoints_for_ship(new_ship)
+            _ensure_empty_hardpoint_rows_for_ship(new_ship)
+        state["last_ship_nick"] = new_ship
+        _refresh_equip_hardpoint_choices()
 
     def _collect_invalid_hardpoint_rows(
         ship_nick: str,
@@ -2957,11 +3531,11 @@ def open_savegame_editor(self):
         rows_to_fix: list[tuple[int, str]] = []
         for r in range(equip_tbl.rowCount()):
             item_cb = equip_tbl.cellWidget(r, 0)
-            hp_cb = equip_tbl.cellWidget(r, 1)
-            if not isinstance(item_cb, QComboBox) or not isinstance(hp_cb, QComboBox):
+            hp_w = equip_tbl.cellWidget(r, 1)
+            if not isinstance(item_cb, QComboBox):
                 continue
             item_nick = _combo_item_nick(item_cb)
-            hp = str(hp_cb.currentText() or "").strip()
+            hp = _hardpoint_from_widget(hp_w)
             if not hp:
                 continue
             if (item_nick, hp) in invalid_pairs:
@@ -2985,10 +3559,13 @@ def open_savegame_editor(self):
                 return 0
         fixed_hps: list[str] = []
         for r, hp in rows_to_fix:
-            hp_cb = equip_tbl.cellWidget(r, 1)
-            if not isinstance(hp_cb, QComboBox):
+            hp_w = equip_tbl.cellWidget(r, 1)
+            if isinstance(hp_w, QComboBox):
+                _set_hardpoint_combo_value(hp_w, "")
+            elif isinstance(hp_w, QLineEdit):
+                hp_w.setText("")
+            else:
                 continue
-            _set_hardpoint_combo_value(hp_cb, "")
             fixed_hps.append(hp)
         _refresh_equip_hardpoint_choices()
         self.statusBar().showMessage(tr("savegame_editor.pending_changes"))
@@ -3106,6 +3683,86 @@ def open_savegame_editor(self):
             out.append((faction, float(spin.value())))
         return out
 
+    def _current_editor_signature() -> dict[str, object]:
+        trent_vals = {
+            "com_body": _combo_item_nick(com_body_cb),
+            "com_head": _combo_item_nick(com_head_cb),
+            "com_lh": _combo_item_nick(com_lh_cb),
+            "com_rh": _combo_item_nick(com_rh_cb),
+            "body": _combo_item_nick(body_cb),
+            "head": _combo_item_nick(head_cb),
+            "lh": _combo_item_nick(lh_cb),
+            "rh": _combo_item_nick(rh_cb),
+        }
+        core_vals = {
+            "power": (_combo_item_nick(core_power_cb), str(core_power_cb.property("fl_extra") or "").strip() or "1"),
+            "engine": (_combo_item_nick(core_engine_cb), str(core_engine_cb.property("fl_extra") or "").strip() or "1"),
+            "scanner": (_combo_item_nick(core_scanner_cb), str(core_scanner_cb.property("fl_extra") or "").strip() or "1"),
+            "tractor": (_combo_item_nick(core_tractor_cb), str(core_tractor_cb.property("fl_extra") or "").strip() or "1"),
+        }
+        return {
+            "rank": int(rank_spin.value()),
+            "money": int(money_spin.value()),
+            "description": str(description_edit.text() or "").strip(),
+            "rep_group": _current_rep_group_nick(),
+            "system": _current_system_nick(),
+            "base": _current_base_nick(),
+            "ship": _current_ship_nick(),
+            "trent": trent_vals,
+            "core": core_vals,
+            "fixed_cargo": {
+                "battery": int(fixed_battery_spin.value()),
+                "repair": int(fixed_repair_spin.value()),
+            },
+            "equip": list(_equip_rows()),
+            "cargo": list(_cargo_rows()),
+            "houses": list(_current_houses()),
+            "locked_ids": sorted(int(v) for v in set(state.get("locked_ids", set()) or set()) if int(v) > 0),
+            "visit_ids": sorted(int(v) for v in set(state.get("visit_ids", set()) or set()) if int(v) > 0),
+        }
+
+    def _has_unsaved_changes() -> bool:
+        if not isinstance(state.get("path"), Path):
+            return False
+        baseline = state.get("baseline_signature")
+        if not isinstance(baseline, dict):
+            return False
+        return _current_editor_signature() != baseline
+
+    def _confirm_close_with_unsaved_changes() -> bool:
+        if not _has_unsaved_changes():
+            return True
+        title = _tr_or("msg.unsaved_title", "Unsaved Changes")
+        text_tpl = _tr_or("msg.unsaved_text", "There are unsaved changes.\nSave before '{action}'?")
+        try:
+            text = text_tpl.format(action=_tr_or("dlg.close", "Close"))
+        except Exception:
+            text = "There are unsaved changes.\nClose without saving?"
+        box = QMessageBox(dlg)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle(title)
+        box.setText(text)
+        save_btn_local = box.addButton(_tr_or("dlg.save", "Save"), QMessageBox.AcceptRole)
+        close_btn_local = box.addButton(_tr_or("dlg.close", "Close"), QMessageBox.DestructiveRole)
+        box.addButton(_tr_or("dlg.cancel", "Cancel"), QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is save_btn_local:
+            _save()
+            return not _has_unsaved_changes()
+        return box.clickedButton() is close_btn_local
+
+    class _CloseEventGuard(QObject):
+        def __init__(self, owner: QDialog):
+            super().__init__(owner)
+            self._owner = owner
+
+        def eventFilter(self, watched, event):
+            if watched is self._owner and event.type() == QEvent.Close:
+                if not _confirm_close_with_unsaved_changes():
+                    event.ignore()
+                    return True
+            return False
+
     def _parse_savegame(path: Path) -> tuple[bool, str]:
         _set_loading_progress(2)
         try:
@@ -3137,6 +3794,14 @@ def open_savegame_editor(self):
         lefthand = ""
         righthand = ""
         ship_archetype = ""
+        core_components: dict[str, tuple[str, str]] = {
+            "power": ("", "1"),
+            "engine": ("", "1"),
+            "scanner": ("", "1"),
+            "tractor": ("", "1"),
+        }
+        fixed_battery_amount = 0
+        fixed_repair_amount = 0
         equip_rows: list[tuple[str, str, str]] = []
         cargo_rows: list[tuple[str, int, str]] = []
         houses: list[tuple[str, float]] = []
@@ -3191,11 +3856,18 @@ def open_savegame_editor(self):
                     if hardpoint and re.match(r"^[+-]?\d+(\.\d+)?$", hardpoint):
                         hardpoint = ""
                     extra = ", ".join(parts[2:]).strip() if len(parts) > 2 else "1"
+                    core_key = _core_component_key_for_item(parts[0])
+                    if core_key in {"power", "engine", "scanner", "tractor"}:
+                        core_item, _core_extra = core_components.get(core_key, ("", "1"))
+                        if not core_item:
+                            core_components[core_key] = (parts[0], extra or "1")
+                        continue
                     equip_rows.append((parts[0], hardpoint, extra))
             elif k == "cargo":
                 parts = [x.strip() for x in v.split(",")]
                 if not parts or not parts[0]:
                     continue
+                cargo_item_nick = _token_to_known_nick(parts[0]).strip()
                 amount = 0
                 for p in parts[1:]:
                     if not p:
@@ -3206,7 +3878,12 @@ def open_savegame_editor(self):
                     except Exception:
                         continue
                 extra = ", ".join(parts[2:]).strip() if len(parts) > 2 else ", , 0"
-                cargo_rows.append((parts[0], amount, extra))
+                if cargo_item_nick.lower() == "ge_s_battery_01":
+                    fixed_battery_amount = max(0, int(amount))
+                elif cargo_item_nick.lower() == "ge_s_repair_01":
+                    fixed_repair_amount = max(0, int(amount))
+                else:
+                    cargo_rows.append((parts[0], amount, extra))
             elif k == "house":
                 parts = [x.strip() for x in v.split(",", 1)]
                 if len(parts) < 2:
@@ -3243,6 +3920,16 @@ def open_savegame_editor(self):
             _set_item_combo_value(lh_cb, lefthand)
             _set_item_combo_value(rh_cb, righthand)
             _set_item_combo_value(ship_archetype_cb, ship_archetype)
+            _set_item_combo_value(core_power_cb, core_components.get("power", ("", "1"))[0])
+            core_power_cb.setProperty("fl_extra", str(core_components.get("power", ("", "1"))[1] or "1"))
+            _set_item_combo_value(core_engine_cb, core_components.get("engine", ("", "1"))[0])
+            core_engine_cb.setProperty("fl_extra", str(core_components.get("engine", ("", "1"))[1] or "1"))
+            _set_item_combo_value(core_scanner_cb, core_components.get("scanner", ("", "1"))[0])
+            core_scanner_cb.setProperty("fl_extra", str(core_components.get("scanner", ("", "1"))[1] or "1"))
+            _set_item_combo_value(core_tractor_cb, core_components.get("tractor", ("", "1"))[0])
+            core_tractor_cb.setProperty("fl_extra", str(core_components.get("tractor", ("", "1"))[1] or "1"))
+            fixed_battery_spin.setValue(max(0, int(fixed_battery_amount)))
+            fixed_repair_spin.setValue(max(0, int(fixed_repair_amount)))
             equip_tbl.setRowCount(0)
             total_equip = max(1, len(equip_rows))
             for i, (item_nick, hp, extra) in enumerate(equip_rows, start=1):
@@ -3250,6 +3937,7 @@ def open_savegame_editor(self):
                 if i == 1 or (i % 100 == 0) or i == total_equip:
                     # Equip fill phase: 62% -> 70%
                     _set_loading_progress(62 + int((i / total_equip) * 8))
+            _ensure_empty_hardpoint_rows_for_ship(_combo_item_nick(ship_archetype_cb))
             cargo_tbl.setRowCount(0)
             total_cargo = max(1, len(cargo_rows))
             for i, (item_nick, amount, extra) in enumerate(cargo_rows, start=1):
@@ -3293,6 +3981,8 @@ def open_savegame_editor(self):
             _set_editor_title(path)
             info_lbl.setText("")
             state["path"] = path
+            state["last_ship_nick"] = _current_ship_nick()
+            state["baseline_signature"] = _current_editor_signature()
             _set_loading_progress(100)
             return True, ""
         finally:
@@ -3368,29 +4058,44 @@ def open_savegame_editor(self):
         return ""
 
     def _refresh_savegame_list(*, select_path: Path | None = None, auto_load: bool = False) -> None:
-        save_dir = _save_dir()
+        save_dirs = _save_dirs()
         files: list[Path] = []
-        if save_dir.exists() and save_dir.is_dir():
+        for save_dir in save_dirs:
+            if not save_dir.exists() or not save_dir.is_dir():
+                continue
             try:
-                files = sorted(
-                    [p for p in save_dir.iterdir() if p.is_file() and p.suffix.lower() == ".fl"],
-                    key=lambda p: p.name.lower(),
-                )
+                files.extend([p for p in save_dir.iterdir() if p.is_file() and p.suffix.lower() == ".fl"])
             except Exception:
-                files = []
+                continue
+        files = self._dedupe_paths(files)
+        files = sorted(files, key=lambda p: (p.name.lower(), str(p.parent).lower()))
         state["updating_savegame_cb"] = True
         savegame_cb.clear()
+        name_counts: dict[str, int] = {}
+        for fp in files:
+            k = fp.name.lower()
+            name_counts[k] = int(name_counts.get(k, 0)) + 1
+        def _save_source_label(fp: Path) -> str:
+            parts = list(fp.parts)
+            low = [str(p).lower() for p in parts]
+            if "my games" in low:
+                idx = low.index("my games")
+                if idx + 1 < len(parts):
+                    return str(parts[idx + 1])
+            return str(fp.parent.name)
         for fp in files:
             ingame_name = _read_savegame_player_name(fp)
-            label = f"{fp.name} - {ingame_name}" if ingame_name else fp.name
+            disamb = f" [{_save_source_label(fp)}]" if int(name_counts.get(fp.name.lower(), 0)) > 1 else ""
+            label = f"{fp.name}{disamb} - {ingame_name}" if ingame_name else f"{fp.name}{disamb}"
             savegame_cb.addItem(label, str(fp))
         state["updating_savegame_cb"] = False
         if not files:
             savegame_cb.setCurrentIndex(-1)
             _set_story_lock_ui(False, 0)
             _set_no_savegame_state()
+            paths_txt = self._savegame_dirs_to_text(save_dirs)
             info_lbl.setText(
-                tr("savegame_editor.no_saves_path_info").format(path=str(save_dir))
+                tr("savegame_editor.no_saves_path_info").format(path=paths_txt or str(default_dir))
             )
             return
         target = None
@@ -3422,17 +4127,20 @@ def open_savegame_editor(self):
 
     def _apply_save_dir() -> bool:
         raw = save_dir_edit.text().strip()
-        path = self._canonical_savegame_dir_from_input(raw)
-        save_dir_edit.setText(str(path))
-        if not path.exists() or not path.is_dir():
+        paths = self._canonical_savegame_dirs_from_input(raw)
+        existing = [p for p in paths if p.exists() and p.is_dir()]
+        save_dir_edit.setText(self._savegame_dirs_to_text(existing or paths))
+        if not existing:
+            err_path = str(paths[0]) if paths else raw
             QMessageBox.warning(
                 dlg,
                 tr("savegame_editor.title"),
-                tr("savegame_editor.path_dir_invalid").format(path=str(path)),
+                tr("savegame_editor.path_dir_invalid").format(path=err_path),
             )
             return False
-        self._cfg.set("settings.savegame_path", str(path))
-        self.statusBar().showMessage(tr("savegame_editor.path_saved").format(path=str(path)))
+        joined = self._savegame_dirs_to_text(existing)
+        self._cfg.set("settings.savegame_path", joined)
+        self.statusBar().showMessage(tr("savegame_editor.path_saved").format(path=joined))
         _refresh_savegame_list(auto_load=False)
         return True
 
@@ -3441,9 +4149,20 @@ def open_savegame_editor(self):
         nonlocal item_name_map, ship_nicks, equip_nicks, trent_nicks, trent_body_nicks
         nonlocal trent_head_nicks, trent_lh_nicks, trent_rh_nicks, ship_hardpoints_by_nick
         nonlocal ship_hp_types_by_hardpoint_by_nick
-        nonlocal equip_type_by_nick, equip_hp_types_by_nick, hash_to_nick
+        nonlocal power_nicks, engine_nicks, scanner_nicks, tractor_nicks
+        nonlocal equip_type_by_nick, equip_source_file_by_nick, equip_hp_types_by_nick, equip_goods_source_by_nick
+        nonlocal ship_light_addons_by_ship_cache, ship_light_cache_loaded, hash_to_nick
         nonlocal jump_data, system_label_by_nick, system_to_bases
         raw_gp = str(game_path_edit.text() or "").strip()
+        if self._is_placeholder_path(raw_gp):
+            game_path = ""
+            game_path_edit.setText("")
+            QMessageBox.warning(
+                dlg,
+                tr("savegame_editor.title"),
+                tr("mod_manager.launch.no_exe").format(path=raw_gp or ""),
+            )
+            return False
         gp_path = self._canonical_game_dir_from_input(raw_gp)
         game_path = str(gp_path).strip()
         game_path_edit.setText(game_path)
@@ -3497,9 +4216,22 @@ def open_savegame_editor(self):
         equip_type_by_nick = {
             str(k): str(v) for k, v in dict(item_data_new.get("equip_type_by_nick", {}) or {}).items()
         }
+        equip_source_file_by_nick = {
+            str(k): str(v).lower() for k, v in dict(item_data_new.get("equip_source_file_by_nick", {}) or {}).items()
+        }
         equip_hp_types_by_nick = {
             str(k): list(v) for k, v in dict(item_data_new.get("equip_hp_types_by_nick", {}) or {}).items()
         }
+        equip_goods_source_by_nick = {
+            str(k): str(v).lower() for k, v in dict(item_data_new.get("equip_goods_source_by_nick", {}) or {}).items()
+        }
+        core_component_nicks_new = self._savegame_editor_collect_core_component_nicks(game_path)
+        power_nicks = list(core_component_nicks_new.get("power", []) or [])
+        engine_nicks = list(core_component_nicks_new.get("engine", []) or [])
+        scanner_nicks = list(core_component_nicks_new.get("scanner", []) or [])
+        tractor_nicks = list(core_component_nicks_new.get("tractor", []) or [])
+        ship_light_addons_by_ship_cache.clear()
+        ship_light_cache_loaded["done"] = False
         hash_to_nick = {int(k): str(v) for k, v in dict(item_data_new.get("hash_to_nick", {}) or {}).items()}
         jump_data = self._savegame_editor_collect_jump_connections(game_path)
         rep_group_cb.blockSignals(True)
@@ -3533,6 +4265,21 @@ def open_savegame_editor(self):
         ship_archetype_cb.clear()
         _setup_item_combo(ship_archetype_cb, ship_nicks)
         ship_archetype_cb.blockSignals(False)
+        core_current = [_combo_item_nick(cb) for cb in core_component_cbs]
+        core_sources: list[tuple[QComboBox, list[str]]] = [
+            (core_power_cb, power_nicks),
+            (core_engine_cb, engine_nicks),
+            (core_scanner_cb, scanner_nicks),
+            (core_tractor_cb, tractor_nicks),
+        ]
+        for idx, (cb, source) in enumerate(core_sources):
+            cb.blockSignals(True)
+            cb.clear()
+            _setup_item_combo(cb, source)
+            _set_item_combo_value(cb, core_current[idx] if idx < len(core_current) else "")
+            if str(cb.property("fl_extra") or "").strip() == "":
+                cb.setProperty("fl_extra", "1")
+            cb.blockSignals(False)
         trent_current = [_combo_item_nick(cb) for cb in trent_item_cbs]
         trent_sources: list[tuple[QComboBox, list[str]]] = [
             (com_body_cb, trent_body_nicks or trent_nicks or equip_nicks),
@@ -3596,7 +4343,9 @@ def open_savegame_editor(self):
             start = sg_edit.text().strip() or str(Path.home())
             chosen = QFileDialog.getExistingDirectory(pd, tr("welcome.browse_title"), start)
             if chosen:
-                sg_edit.setText(chosen)
+                merged = self._canonical_savegame_dirs_from_input(sg_edit.text().strip())
+                merged.extend(self._canonical_savegame_dirs_from_input(chosen))
+                sg_edit.setText(self._savegame_dirs_to_text(merged))
 
         def _browse_game_path() -> None:
             start = gm_edit.text().strip() or str(Path.home())
@@ -3695,7 +4444,8 @@ def open_savegame_editor(self):
         if isinstance(cur, Path):
             start_dir = str(cur.parent)
         else:
-            start_dir = str(_save_dir())
+            save_dirs = _save_dirs()
+            start_dir = str(save_dirs[0]) if save_dirs else str(Path.home())
         chosen, _flt = QFileDialog.getOpenFileName(
             dlg,
             tr("savegame_editor.open"),
@@ -3705,7 +4455,9 @@ def open_savegame_editor(self):
         if not chosen:
             return
         chosen_path = Path(chosen)
-        save_dir_edit.setText(str(chosen_path.parent))
+        merged_dirs = self._canonical_savegame_dirs_from_input(save_dir_edit.text().strip())
+        merged_dirs.extend([chosen_path.parent])
+        save_dir_edit.setText(self._savegame_dirs_to_text(merged_dirs))
         _apply_save_dir()
         ok, msg = _parse_with_loading(chosen_path)
         if not ok:
@@ -3850,6 +4602,26 @@ def open_savegame_editor(self):
         ship_token = _item_token_for_save(current_ship_nick)
         player, _ = self._set_single_key_line_in_section(player, "ship_archetype", f"ship_archetype = {ship_token}")
 
+        missing_core: list[str] = []
+        core_required_pairs = [
+            ("Power", core_power_cb),
+            ("Engine", core_engine_cb),
+            ("Scanner", core_scanner_cb),
+            ("Tractor", core_tractor_cb),
+        ]
+        for label, cb in core_required_pairs:
+            if not _combo_item_nick(cb):
+                missing_core.append(label)
+        if missing_core:
+            QMessageBox.warning(
+                dlg,
+                tr("savegame_editor.title"),
+                "Save aborted: required core components are missing.\n\n"
+                + "Missing: "
+                + ", ".join(missing_core),
+            )
+            return
+
         invalid_hp_rows = _collect_invalid_hardpoint_rows(current_ship_nick, _equip_rows())
         if invalid_hp_rows:
             hp_list = sorted({hp for _item, hp in invalid_hp_rows}, key=str.lower)
@@ -3869,6 +4641,19 @@ def open_savegame_editor(self):
             house_lines.append(f"house = {_fmt_rep(rep)}, {faction}")
 
         equip_lines: list[str] = []
+        core_component_pairs = [
+            ("power", core_power_cb),
+            ("engine", core_engine_cb),
+            ("scanner", core_scanner_cb),
+            ("tractor", core_tractor_cb),
+        ]
+        for _core_name, core_cb in core_component_pairs:
+            core_nick = _combo_item_nick(core_cb)
+            item_token = _item_token_for_save(core_nick)
+            if not item_token:
+                continue
+            tail = str(core_cb.property("fl_extra") or "").strip() or "1"
+            equip_lines.append(f"equip = {item_token}, , {tail}")
         for item_nick, hardpoint, extra in _equip_rows():
             item_token = _item_token_for_save(item_nick)
             if not item_token:
@@ -3882,7 +4667,20 @@ def open_savegame_editor(self):
                 equip_lines.append(f"equip = {item_token}, , {tail}")
 
         cargo_lines: list[str] = []
+        fixed_cargo_pairs = [
+            ("ge_s_battery_01", int(fixed_battery_spin.value())),
+            ("ge_s_repair_01", int(fixed_repair_spin.value())),
+        ]
+        for fixed_nick, fixed_amount in fixed_cargo_pairs:
+            if int(fixed_amount) <= 0:
+                continue
+            item_token = _item_token_for_save(fixed_nick)
+            if not item_token:
+                continue
+            cargo_lines.append(f"cargo = {item_token}, {int(fixed_amount)}, , , 0")
         for item_nick, amount, extra in _cargo_rows():
+            if str(item_nick or "").strip().lower() in {"ge_s_battery_01", "ge_s_repair_01"}:
+                continue
             item_token = _item_token_for_save(item_nick)
             if not item_token:
                 continue
@@ -3946,6 +4744,7 @@ def open_savegame_editor(self):
             return
         self.statusBar().showMessage(tr("savegame_editor.saved").format(path=str(cur), backup=str(backup)))
         info_lbl.setText(tr("savegame_editor.saved").format(path=str(cur), backup=str(backup)))
+        state["baseline_signature"] = _current_editor_signature()
 
     act_file_refresh = file_menu.addAction(tr("savegame_editor.refresh_list"))
     act_file_load_selected = file_menu.addAction(tr("savegame_editor.load_selected"))
@@ -3981,8 +4780,8 @@ def open_savegame_editor(self):
         act.setChecked(c.lower() == str(get_language() or "").lower())
         lang_actions[c] = act
 
-    ship_archetype_cb.currentIndexChanged.connect(lambda _idx: _refresh_equip_hardpoint_choices())
-    ship_archetype_cb.currentTextChanged.connect(lambda _txt: _refresh_equip_hardpoint_choices())
+    ship_archetype_cb.currentIndexChanged.connect(lambda _idx: _on_ship_changed())
+    ship_archetype_cb.currentTextChanged.connect(lambda _txt: _on_ship_changed())
     system_cb.currentIndexChanged.connect(lambda _idx: _rebuild_base_combo(_current_system_nick(), _current_base_nick()))
     system_cb.currentTextChanged.connect(lambda _txt: _rebuild_base_combo(_current_system_nick(), _current_base_nick()))
     equip_add_btn.clicked.connect(lambda: _add_equip_row("", ""))
@@ -3998,14 +4797,17 @@ def open_savegame_editor(self):
     unlock_all_btn.clicked.connect(_unlock_all_connections)
     visit_unlock_all_btn.clicked.connect(_visit_unlock_all_connections)
     apply_template_btn.clicked.connect(_apply_template)
+    def _request_close() -> None:
+        if _confirm_close_with_unsaved_changes():
+            dlg.reject()
     save_btn.clicked.connect(_save)
-    close_btn.clicked.connect(dlg.reject)
+    close_btn.clicked.connect(_request_close)
     act_file_refresh.triggered.connect(lambda: _refresh_savegame_list(auto_load=False))
     act_file_load_selected.triggered.connect(_load_selected)
     act_file_open.triggered.connect(_pick_file)
     act_file_reload.triggered.connect(_reload)
     act_file_save.triggered.connect(_save)
-    act_file_close.triggered.connect(dlg.reject)
+    act_file_close.triggered.connect(_request_close)
     act_settings_paths.triggered.connect(_open_path_settings)
     act_help_quick.triggered.connect(
         lambda: QMessageBox.information(dlg, tr("savegame_editor.help.quick"), tr("savegame_editor.help.quick_text"))
@@ -4059,9 +4861,9 @@ def open_savegame_editor(self):
         act.triggered.connect(lambda _checked=False, c=code: _switch_language(c))
     def _apply_theme(theme_name: str) -> None:
         nonlocal current_theme
-        tname = str(theme_name or "Light").strip()
+        tname = str(theme_name or "Dark").strip()
         if tname not in THEME_ORDER_SET or tname not in THEME_STYLES:
-            tname = "Light"
+            tname = "Dark"
         if tname == current_theme:
             return
         qss = THEME_STYLES.get(tname, "") + "\n" + THEME_FONT_LOCK_QSS
@@ -4081,9 +4883,9 @@ def open_savegame_editor(self):
                 act.setChecked(name == tname)
             except Exception:
                 pass
-    current_theme = str(self._cfg.get("settings.theme", "Light") or "Light").strip()
+    current_theme = str(self._cfg.get("settings.theme", "Dark") or "Dark").strip()
     if current_theme not in THEME_ORDER_SET or current_theme not in THEME_STYLES:
-        current_theme = "Light"
+        current_theme = "Dark"
     for name, act in theme_actions.items():
         act.triggered.connect(lambda _checked=False, n=name: _apply_theme(n))
     dlg.setStyleSheet(THEME_STYLES.get(current_theme, "") + "\n" + THEME_FONT_LOCK_QSS)
@@ -4100,8 +4902,7 @@ def open_savegame_editor(self):
     _refresh_hardpoint_hint()
     QTimer.singleShot(0, _close_startup_splash)
     rc = dlg.exec()
-    if rc == 2:
-        open_savegame_editor(self)
+    return rc
 
 
 def run_standalone() -> int:
@@ -4132,7 +4933,10 @@ def run_standalone() -> int:
             return 1
         _check_for_updates_popup_async(None)
         host.hide()
-        open_savegame_editor(host)
+        while True:
+            rc = open_savegame_editor(host)
+            if rc != 2:
+                break
         host.close()
         return 0
     finally:
@@ -4143,23 +4947,25 @@ def _standalone_ensure_paths(host: _SavegameEditorHost) -> bool:
     cfg = host._cfg
     save_path_raw = str(cfg.get("settings.savegame_path", "") or "").strip()
     game_path_raw = str(cfg.get("settings.savegame_game_path", "") or "").strip()
-    save_path_obj = host._canonical_savegame_dir_from_input(save_path_raw)
-    game_path_obj = host._canonical_game_dir_from_input(game_path_raw)
-    save_path = str(save_path_obj).strip()
-    game_path = str(game_path_obj).strip()
-    save_ok = bool(save_path) and save_path_obj.exists() and save_path_obj.is_dir()
+    save_path_objs = host._canonical_savegame_dirs_from_input(save_path_raw) if not host._is_placeholder_path(save_path_raw) else []
+    game_path_obj = host._canonical_game_dir_from_input(game_path_raw) if not host._is_placeholder_path(game_path_raw) else Path("")
+    save_path = host._savegame_dirs_to_text(save_path_objs)
+    game_path = "" if host._is_placeholder_path(game_path_raw) else str(game_path_obj).strip()
+    save_existing = [p for p in save_path_objs if p.exists() and p.is_dir()]
+    save_ok = bool(save_existing)
     game_ok = bool(game_path) and game_path_obj.exists() and game_path_obj.is_dir() and host._find_freelancer_exe(game_path_obj) is not None
 
-    detected_save_obj: Path | None = None
+    detected_save_objs: list[Path] = []
     detected_game_obj: Path | None = None
     if not save_ok:
-        detected_save_obj = host._probe_savegame_editor_dir()
+        detected_save_objs = host._probe_savegame_editor_dirs()
     if not game_ok:
         detected_game_obj = host._probe_savegame_editor_game_path()
-    if isinstance(detected_save_obj, Path):
-        save_path_obj = detected_save_obj
-        save_path = str(save_path_obj).strip()
-        save_ok = save_path_obj.exists() and save_path_obj.is_dir()
+    if detected_save_objs:
+        save_path_objs = list(detected_save_objs)
+        save_existing = [p for p in save_path_objs if p.exists() and p.is_dir()]
+        save_path = host._savegame_dirs_to_text(save_existing)
+        save_ok = bool(save_existing)
     if isinstance(detected_game_obj, Path):
         game_path_obj = detected_game_obj
         game_path = str(game_path_obj).strip()
@@ -4169,7 +4975,7 @@ def _standalone_ensure_paths(host: _SavegameEditorHost) -> bool:
             and host._find_freelancer_exe(game_path_obj) is not None
         )
     if save_ok:
-        cfg.set("settings.savegame_path", save_path)
+        cfg.set("settings.savegame_path", host._savegame_dirs_to_text(save_existing))
     if game_ok:
         cfg.set("settings.savegame_game_path", game_path)
     if save_ok and game_ok:
@@ -4194,9 +5000,9 @@ def _standalone_ensure_paths(host: _SavegameEditorHost) -> bool:
     sg_l.setContentsMargins(0, 0, 0, 0)
     sg_l.setSpacing(6)
     sg_default = save_path or (
-        str(detected_save_obj)
-        if isinstance(detected_save_obj, Path)
-        else str(host._canonical_savegame_dir_from_input(str(host._default_savegame_editor_dir())))
+        host._savegame_dirs_to_text(detected_save_objs)
+        if detected_save_objs
+        else host._savegame_dirs_to_text(host._default_savegame_editor_dirs())
     )
     sg_edit = QLineEdit(sg_default, dlg)
     sg_l.addWidget(sg_edit, 1)
@@ -4211,7 +5017,7 @@ def _standalone_ensure_paths(host: _SavegameEditorHost) -> bool:
     gm_default = game_path or (
         str(detected_game_obj)
         if isinstance(detected_game_obj, Path)
-        else str(host._canonical_game_dir_from_input(str(host._default_savegame_editor_game_path() or "")))
+        else str(host._default_savegame_editor_game_path() or "")
     )
     gm_edit = QLineEdit(gm_default, dlg)
     gm_l.addWidget(gm_edit, 1)
@@ -4232,7 +5038,9 @@ def _standalone_ensure_paths(host: _SavegameEditorHost) -> bool:
         start = sg_edit.text().strip() or str(Path.home())
         chosen = QFileDialog.getExistingDirectory(dlg, tr("welcome.browse_title"), start)
         if chosen:
-            sg_edit.setText(chosen)
+            merged = host._canonical_savegame_dirs_from_input(sg_edit.text().strip())
+            merged.extend(host._canonical_savegame_dirs_from_input(chosen))
+            sg_edit.setText(host._savegame_dirs_to_text(merged))
 
     def _browse_game_path() -> None:
         start = gm_edit.text().strip() or str(Path.home())
@@ -4241,13 +5049,14 @@ def _standalone_ensure_paths(host: _SavegameEditorHost) -> bool:
             gm_edit.setText(chosen)
 
     def _accept() -> None:
-        sg_obj = host._canonical_savegame_dir_from_input(sg_edit.text().strip())
+        sg_objs = host._canonical_savegame_dirs_from_input(sg_edit.text().strip())
         gm_obj = host._canonical_game_dir_from_input(gm_edit.text().strip())
-        sg = str(sg_obj).strip()
+        sg_valid = [p for p in sg_objs if p.exists() and p.is_dir()]
+        sg = host._savegame_dirs_to_text(sg_valid or sg_objs)
         gm = str(gm_obj).strip()
         sg_edit.setText(sg)
         gm_edit.setText(gm)
-        if not sg or not sg_obj.is_dir():
+        if not sg_valid:
             QMessageBox.warning(dlg, tr("savegame_editor.title"), tr("savegame_editor.path_dir_invalid").format(path=sg))
             return
         if not gm or not gm_obj.is_dir() or host._find_freelancer_exe(gm_obj) is None:
