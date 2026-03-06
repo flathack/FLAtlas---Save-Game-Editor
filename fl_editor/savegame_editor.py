@@ -9,10 +9,13 @@ import os
 import re
 import shutil
 import sys
+import json
+import webbrowser
+from urllib import request as urlrequest, error as urlerror
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QPointF, QRectF
-from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QIcon, QPixmap
+from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QIcon, QPixmap, QActionGroup
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -45,7 +48,7 @@ from PySide6.QtWidgets import (
 )
 
 from .i18n import tr, set_language, get_language, available_languages
-from .config import Config
+from .config import Config, CONFIG_PATH
 from .parser import FLParser, find_all_systems
 from .path_utils import ci_find, ci_resolve
 from .dll_resources import DllStringResolver
@@ -53,11 +56,371 @@ from .dll_resources import DllStringResolver
 SAVEGAME_EDITOR_VERSION = "v0.1.0"
 DISCORD_INVITE_URL = "https://discord.gg/RENtMMcc"
 BUG_REPORT_URL = "https://github.com/flathack/FLAtlas/issues"
+GITHUB_RELEASES_API = "https://api.github.com/repos/flathack/FLAtlas---Save-Game-Editor/releases?per_page=30"
+
+THEME_ORDER = [
+    "Standard",
+    "Light",
+    "Dark",
+    "High Contrast",
+    "Linux KDE",
+]
+THEME_ORDER_SET = {str(n) for n in THEME_ORDER}
+
+THEME_STYLES: dict[str, str] = {
+    "Standard": """
+QDialog { background-color: #12161f; color: #e8edf5; }
+QMenuBar, QMenu { background: #171c26; color: #e8edf5; }
+QMenuBar::item:selected, QMenu::item:selected { background: #2f6fed; color: #ffffff; border-radius: 6px; }
+QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #e8edf5; }
+QLabel:disabled, QAbstractButton:disabled, QGroupBox::title:disabled { color: #8893a6; }
+QGroupBox { border: 1px solid #2f3b51; border-radius: 10px; margin-top: 9px; padding-top: 8px; background: #151b26; }
+QPushButton { background: #1d2533; border: 1px solid #3b4d6a; border-radius: 8px; padding: 6px 12px; color: #eef3fb; }
+QPushButton:hover { background: #243048; border-color: #5f7fb8; }
+QPushButton:pressed { background: #1b2740; }
+QPushButton:disabled { color: #7f8aa0; border-color: #313c50; background: #1a202c; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #0f141d; color: #e8edf5; border: 1px solid #3b4d6a; border-radius: 8px; min-height: 24px; selection-background-color: #2f6fed; selection-color: #ffffff; }
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #8791a4; border-color: #2a3447; background: #141a24; }
+QTabWidget::pane { border: 1px solid #33425c; border-radius: 10px; top: -1px; background: #121923; }
+QTabBar::tab { background: #1a2230; border: 1px solid #33425c; border-radius: 8px; padding: 6px 12px; margin-right: 2px; color: #cfd9e8; }
+QTabBar::tab:selected { background: #243247; color: #ffffff; border-color: #5f7fb8; }
+QTableWidget { gridline-color: #2a364b; background: #0f141d; alternate-background-color: #141a25; }
+QHeaderView::section { background: #1b2332; border: 1px solid #2a364b; padding: 4px; }
+QScrollBar:vertical, QScrollBar:horizontal { background: #151c27; }
+""",
+    "Light": """
+QDialog { background-color: #f5f7fb; color: #111827; }
+QMenuBar, QMenu { background: #f5f7fb; color: #111827; }
+QMenuBar::item:selected, QMenu::item:selected { background: #2563eb; color: #ffffff; border-radius: 6px; }
+QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #111827; }
+QLabel:disabled, QAbstractButton:disabled, QGroupBox::title:disabled { color: #7a8598; }
+QGroupBox { border: 1px solid #d5dbe6; border-radius: 10px; margin-top: 9px; padding-top: 8px; background: #ffffff; }
+QPushButton { background: #edf2ff; border: 1px solid #c3d1ee; border-radius: 8px; padding: 6px 12px; color: #111827; }
+QPushButton:hover { background: #e3ebff; border-color: #98afe0; }
+QPushButton:pressed { background: #dae5ff; }
+QPushButton:disabled { color: #8a96aa; border-color: #d3dcea; background: #f2f5fa; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #ffffff; color: #111827; border: 1px solid #c8d1e0; border-radius: 8px; min-height: 24px; selection-background-color: #2563eb; selection-color: #ffffff; }
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #8a96aa; border-color: #d8dfea; background: #f4f7fb; }
+QTabWidget::pane { border: 1px solid #d0d8e5; border-radius: 10px; top: -1px; background: #ffffff; }
+QTabBar::tab { background: #eef3ff; border: 1px solid #d0d8e5; border-radius: 8px; padding: 6px 12px; margin-right: 2px; color: #334155; }
+QTabBar::tab:selected { background: #ffffff; color: #111827; border-color: #9fb5e4; }
+QTableWidget { gridline-color: #e1e7f0; background: #ffffff; alternate-background-color: #f8faff; }
+QHeaderView::section { background: #f0f4fb; border: 1px solid #e1e7f0; padding: 4px; }
+""",
+    "Dark": """
+QDialog { background-color: #0f131b; color: #e7edf8; }
+QMenuBar, QMenu { background: #141a24; color: #e7edf8; }
+QMenuBar::item:selected, QMenu::item:selected { background: #3b82f6; color: #ffffff; border-radius: 6px; }
+QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #e7edf8; }
+QLabel:disabled, QAbstractButton:disabled, QGroupBox::title:disabled { color: #8c97aa; }
+QGroupBox { border: 1px solid #2a3448; border-radius: 10px; margin-top: 9px; padding-top: 8px; background: #141a24; }
+QPushButton { background: #1a2434; border: 1px solid #354967; border-radius: 8px; padding: 6px 12px; color: #eef3fd; }
+QPushButton:hover { background: #223049; border-color: #6687c0; }
+QPushButton:pressed { background: #1f2a40; }
+QPushButton:disabled { color: #8994a8; border-color: #2d3a51; background: #1a222f; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #0c1119; color: #e7edf8; border: 1px solid #354967; border-radius: 8px; min-height: 24px; selection-background-color: #3b82f6; selection-color: #ffffff; }
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #8c97aa; border-color: #2b3850; background: #131a25; }
+QTabWidget::pane { border: 1px solid #2d3a51; border-radius: 10px; top: -1px; background: #111823; }
+QTabBar::tab { background: #192232; border: 1px solid #2d3a51; border-radius: 8px; padding: 6px 12px; margin-right: 2px; color: #c4cfdf; }
+QTabBar::tab:selected { background: #24344d; color: #ffffff; border-color: #6687c0; }
+QTableWidget { gridline-color: #263449; background: #0d121a; alternate-background-color: #121a26; }
+QHeaderView::section { background: #182233; border: 1px solid #263449; padding: 4px; }
+QScrollBar:vertical, QScrollBar:horizontal { background: #141a24; }
+""",
+    "High Contrast": """
+QDialog { background-color: #000000; color: #ffffff; }
+QMenuBar, QMenu { background: #000000; color: #ffffff; border: 1px solid #ffffff; }
+QMenuBar::item:selected, QMenu::item:selected { background: #ffff00; color: #000000; }
+QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #ffffff; }
+QLabel:disabled, QAbstractButton:disabled, QGroupBox::title:disabled { color: #bfbfbf; }
+QGroupBox { border: 2px solid #ffffff; border-radius: 0px; margin-top: 10px; padding-top: 8px; background: #000000; }
+QPushButton { background: #000000; border: 2px solid #ffffff; border-radius: 0px; padding: 6px 12px; color: #ffffff; }
+QPushButton:hover { border-color: #ffff00; color: #ffff00; }
+QPushButton:pressed { background: #ffff00; color: #000000; }
+QPushButton:disabled { color: #bfbfbf; border-color: #9f9f9f; background: #000000; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
+    background: #000000;
+    color: #ffffff;
+    border: 2px solid #ffffff;
+    border-radius: 0px;
+    min-height: 24px;
+    selection-background-color: #ffff00;
+    selection-color: #000000;
+}
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {
+    color: #bfbfbf;
+    border-color: #9f9f9f;
+    background: #000000;
+}
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QPushButton:focus, QTableWidget:focus {
+    border: 3px solid #00ffff;
+}
+QTabWidget::pane { border: 2px solid #ffffff; border-radius: 0px; top: -1px; background: #000000; }
+QTabBar::tab { background: #000000; border: 2px solid #ffffff; border-radius: 0px; padding: 6px 12px; margin-right: 2px; color: #ffffff; }
+QTabBar::tab:selected { background: #ffff00; color: #000000; border-color: #ffffff; }
+QTableWidget {
+    gridline-color: #ffffff;
+    background: #000000;
+    alternate-background-color: #0f0f0f;
+    color: #ffffff;
+    selection-background-color: #ffff00;
+    selection-color: #000000;
+}
+QHeaderView::section { background: #000000; border: 2px solid #ffffff; color: #ffffff; padding: 4px; }
+QScrollBar:vertical, QScrollBar:horizontal { background: #000000; border: 1px solid #ffffff; }
+QToolTip { background: #000000; color: #ffffff; border: 1px solid #ffffff; }
+""",
+    "Windows XP": """
+QDialog { background-color: #ece9d8; color: #1f1f1f; }
+QMenuBar, QMenu { background: #ece9d8; color: #1f1f1f; }
+QMenuBar::item:selected, QMenu::item:selected { background: #316ac5; color: #ffffff; }
+QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #1f1f1f; }
+QLabel:disabled, QAbstractButton:disabled, QGroupBox::title:disabled { color: #7b7b7b; }
+QGroupBox { border: 1px solid #7f9db9; margin-top: 8px; padding-top: 6px; background: #f5f2e5; }
+QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 3px; }
+QPushButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #f9f8f3, stop:1 #dcd9c8); border: 1px solid #7f9db9; padding: 4px 10px; }
+QPushButton:hover { border-color: #3c7fb1; }
+QPushButton:disabled { color: #808080; border-color: #9a9a9a; background: #e1dfd2; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #ffffff; color: #1f1f1f; border: 1px solid #7f9db9; min-height: 22px; selection-background-color: #316ac5; selection-color: #ffffff; }
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #7b7b7b; background: #f0f0f0; }
+QTabWidget::pane { border: 1px solid #7f9db9; top: -1px; }
+QTabBar::tab { background: #e3e9f7; border: 1px solid #7f9db9; padding: 5px 10px; margin-right: 1px; }
+QTabBar::tab:selected { background: #ffffff; }
+QTableWidget { gridline-color: #b5c5db; background: #ffffff; alternate-background-color: #f7f9ff; }
+QHeaderView::section { background: #dbe6f7; border: 1px solid #a8bcd9; padding: 4px; }
+""",
+    "Windows 7": """
+QDialog { background-color: #edf2fb; color: #1b1d1f; }
+QMenuBar, QMenu { background: #edf2fb; color: #1b1d1f; }
+QMenuBar::item:selected, QMenu::item:selected { background: #2f75d6; color: #ffffff; }
+QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #1b1d1f; }
+QLabel:disabled, QAbstractButton:disabled, QGroupBox::title:disabled { color: #6f7785; }
+QGroupBox { border: 1px solid #9bb7df; border-radius: 4px; margin-top: 8px; padding-top: 6px; background: #f6f9ff; }
+QPushButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ffffff, stop:1 #d6e3f6); border: 1px solid #8ca9d1; border-radius: 3px; padding: 5px 11px; }
+QPushButton:hover { border-color: #4f7fbe; }
+QPushButton:disabled { color: #7f8898; border-color: #aeb8ca; background: #e9edf5; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #ffffff; color: #1b1d1f; border: 1px solid #8ca9d1; border-radius: 2px; min-height: 22px; selection-background-color: #2f75d6; selection-color: #ffffff; }
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #6f7785; background: #f1f4f9; border-color: #bec8da; }
+QTabWidget::pane { border: 1px solid #9bb7df; }
+QTabBar::tab { background: #dce8f9; border: 1px solid #9bb7df; padding: 5px 10px; }
+QTabBar::tab:selected { background: #ffffff; }
+QTableWidget { gridline-color: #c3d0e4; background: #ffffff; alternate-background-color: #f7faff; }
+QHeaderView::section { background: #e4eefc; border: 1px solid #bfd0ea; padding: 4px; }
+""",
+    "Windows 10": """
+QDialog { background-color: #f2f2f2; color: #111111; }
+QMenuBar, QMenu { background: #f2f2f2; color: #111111; }
+QMenuBar::item:selected, QMenu::item:selected { background: #0078d7; color: #ffffff; }
+QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #111111; }
+QLabel:disabled, QAbstractButton:disabled, QGroupBox::title:disabled { color: #6a6a6a; }
+QGroupBox { border: 1px solid #b8b8b8; margin-top: 8px; padding-top: 6px; background: #f9f9f9; }
+QPushButton { background: #f3f3f3; border: 1px solid #adadad; border-radius: 2px; padding: 5px 12px; }
+QPushButton:hover { border-color: #0078d7; }
+QPushButton:disabled { color: #8b8b8b; background: #ededed; border-color: #c9c9c9; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #ffffff; color: #111111; border: 1px solid #9c9c9c; min-height: 22px; selection-background-color: #0078d7; selection-color: #ffffff; }
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #7a7a7a; background: #f3f3f3; border-color: #c7c7c7; }
+QTabWidget::pane { border: 1px solid #b8b8b8; top: -1px; }
+QTabBar::tab { background: #e9e9e9; border: 1px solid #b8b8b8; padding: 5px 11px; }
+QTabBar::tab:selected { background: #ffffff; border-bottom-color: #ffffff; }
+QTableWidget { gridline-color: #d3d3d3; background: #ffffff; alternate-background-color: #fafafa; }
+QHeaderView::section { background: #f0f0f0; border: 1px solid #d3d3d3; padding: 4px; }
+""",
+    "Windows 11": """
+QDialog { background-color: #f6f8fc; color: #101828; }
+QMenuBar, QMenu { background: #f6f8fc; color: #101828; }
+QMenuBar::item:selected, QMenu::item:selected { background: #2563eb; color: #ffffff; border-radius: 6px; }
+QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #101828; }
+QLabel:disabled, QAbstractButton:disabled, QGroupBox::title:disabled { color: #76839a; }
+QGroupBox { border: 1px solid #c8d2e1; border-radius: 10px; margin-top: 10px; padding-top: 8px; }
+QGroupBox::title { left: 10px; padding: 0 4px; }
+QPushButton { background: #e8efff; border: 1px solid #b7c5e2; border-radius: 8px; padding: 6px 13px; }
+QPushButton:hover { background: #dce7ff; border-color: #7ea2df; }
+QPushButton:disabled { color: #8794ab; background: #eef2f8; border-color: #d4deec; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #ffffff; color: #101828; border: 1px solid #c3cfdf; border-radius: 8px; min-height: 24px; selection-background-color: #2563eb; selection-color: #ffffff; }
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #7e8ca2; background: #f2f5fa; border-color: #d8e0ec; }
+QTabWidget::pane { border: 1px solid #c3cfdf; border-radius: 10px; top: -1px; }
+QTabBar::tab { background: #edf2ff; border: 1px solid #c3cfdf; border-radius: 8px; padding: 6px 12px; margin-right: 2px; }
+QTabBar::tab:selected { background: #ffffff; }
+QTableWidget { gridline-color: #d8e0ec; background: #ffffff; alternate-background-color: #f7f9fd; }
+QHeaderView::section { background: #eef3fb; border: 1px solid #d8e0ec; padding: 4px; }
+""",
+    "Linux KDE": """
+QDialog { background-color: #1f2530; color: #e6edf7; }
+QMenuBar, QMenu { background: #232a36; color: #e6edf7; }
+QMenuBar::item:selected, QMenu::item:selected { background: #3d7ea6; color: #ffffff; }
+QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #e6edf7; }
+QLabel:disabled, QAbstractButton:disabled, QGroupBox::title:disabled { color: #94a3ba; }
+QGroupBox { border: 1px solid #4f6179; border-radius: 5px; margin-top: 8px; padding-top: 6px; }
+QPushButton { background: #2a3444; border: 1px solid #5f7290; border-radius: 4px; padding: 5px 10px; color: #f0f4fb; }
+QPushButton:hover { background: #314157; border-color: #79a3d1; }
+QPushButton:disabled { color: #95a2b8; border-color: #4d607d; background: #2a3240; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #121821; color: #e6edf7; border: 1px solid #5f7290; min-height: 22px; selection-background-color: #3d7ea6; selection-color: #ffffff; }
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #97a5bc; background: #1b2230; border-color: #485a74; }
+QTabWidget::pane { border: 1px solid #5f7290; }
+QTabBar::tab { background: #2b3648; border: 1px solid #5f7290; padding: 5px 10px; }
+QTabBar::tab:selected { background: #3a4b63; }
+QTableWidget { gridline-color: #3d4d64; background: #121821; alternate-background-color: #18202c; }
+QHeaderView::section { background: #293549; border: 1px solid #43556f; padding: 4px; }
+""",
+    "Gnome": """
+QDialog { background-color: #f6f5f4; color: #241f31; }
+QMenuBar, QMenu { background: #f6f5f4; color: #241f31; }
+QMenuBar::item:selected, QMenu::item:selected { background: #3584e4; color: #ffffff; border-radius: 6px; }
+QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #241f31; }
+QLabel:disabled, QAbstractButton:disabled, QGroupBox::title:disabled { color: #77767b; }
+QGroupBox { border: 1px solid #c6c4c0; border-radius: 12px; margin-top: 9px; padding-top: 8px; }
+QPushButton { background: #ffffff; border: 1px solid #c6c4c0; border-radius: 10px; padding: 6px 13px; }
+QPushButton:hover { border-color: #3584e4; }
+QPushButton:disabled { color: #8a8891; border-color: #d8d6d3; background: #f1f1f1; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #ffffff; color: #241f31; border: 1px solid #c6c4c0; border-radius: 10px; min-height: 24px; selection-background-color: #3584e4; selection-color: #ffffff; }
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #807d89; background: #f2f2f1; border-color: #d8d6d3; }
+QTabWidget::pane { border: 1px solid #c6c4c0; border-radius: 12px; }
+QTabBar::tab { background: #eceae8; border: 1px solid #c6c4c0; border-radius: 9px; padding: 6px 12px; margin-right: 2px; }
+QTabBar::tab:selected { background: #ffffff; border-color: #3584e4; }
+QTableWidget { gridline-color: #dad8d4; background: #ffffff; alternate-background-color: #f7f6f5; }
+QHeaderView::section { background: #efeeec; border: 1px solid #dad8d4; padding: 4px; }
+""",
+}
 
 
 def _tr_or(key: str, fallback: str) -> str:
     txt = str(tr(key) or "").strip()
     return fallback if (not txt or txt == key) else txt
+
+
+def _parse_version_tag(tag: str) -> tuple[list[int], list[tuple[int, int | str]], bool]:
+    raw = str(tag or "").strip().lstrip("vV")
+    if not raw:
+        return [0], [], False
+    core, _sep, pre = raw.partition("-")
+    core_parts: list[int] = []
+    for part in core.split("."):
+        try:
+            core_parts.append(int(part))
+        except Exception:
+            core_parts.append(0)
+    pre_parts: list[tuple[int, int | str]] = []
+    if pre:
+        for part in re.split(r"[.\-]+", pre):
+            p = str(part or "").strip()
+            if not p:
+                continue
+            if p.isdigit():
+                pre_parts.append((0, int(p)))  # numeric
+            else:
+                pre_parts.append((1, p.lower()))  # alnum
+    return core_parts, pre_parts, bool(pre_parts)
+
+
+def _is_version_newer(latest_tag: str, current_tag: str) -> bool:
+    la_core, la_pre, la_is_pre = _parse_version_tag(latest_tag)
+    cu_core, cu_pre, cu_is_pre = _parse_version_tag(current_tag)
+    max_len = max(len(la_core), len(cu_core))
+    for i in range(max_len):
+        lv = la_core[i] if i < len(la_core) else 0
+        cv = cu_core[i] if i < len(cu_core) else 0
+        if lv != cv:
+            return lv > cv
+    if la_is_pre != cu_is_pre:
+        return not la_is_pre  # stable > prerelease
+    if not la_is_pre and not cu_is_pre:
+        return False
+    max_pre = max(len(la_pre), len(cu_pre))
+    for i in range(max_pre):
+        if i >= len(la_pre):
+            return False
+        if i >= len(cu_pre):
+            return True
+        lt, lv = la_pre[i]
+        ct, cv = cu_pre[i]
+        if lt != ct:
+            return lt < ct  # numeric < string
+        if lv != cv:
+            return lv > cv
+    return False
+
+
+def _fetch_latest_release() -> dict[str, str] | None:
+    req = urlrequest.Request(
+        GITHUB_RELEASES_API,
+        headers={
+            "User-Agent": "FLAtlas-Savegame-Editor",
+            "Accept": "application/vnd.github+json",
+        },
+    )
+    try:
+        with urlrequest.urlopen(req, timeout=5) as resp:
+            raw = resp.read()
+    except (urlerror.URLError, TimeoutError, OSError):
+        return None
+    try:
+        data = json.loads(raw.decode("utf-8", errors="ignore"))
+    except Exception:
+        return None
+    if not isinstance(data, list):
+        return None
+    best: dict[str, str] | None = None
+    for row in data:
+        if not isinstance(row, dict):
+            continue
+        if bool(row.get("draft")):
+            continue
+        tag = str(row.get("tag_name") or "").strip()
+        if not tag:
+            continue
+        cand = {
+            "tag": tag,
+            "name": str(row.get("name") or tag),
+            "url": str(row.get("html_url") or ""),
+            "type": "Pre-release" if bool(row.get("prerelease")) else "Release",
+        }
+        if best is None or _is_version_newer(cand["tag"], best["tag"]):
+            best = cand
+    return best
+
+
+def _check_for_updates_popup(parent: QWidget | None = None, *, verbose: bool = False) -> None:
+    latest = _fetch_latest_release()
+    if not latest:
+        if verbose:
+            QMessageBox.information(
+                parent,
+                tr("savegame_editor.title"),
+                tr("savegame_editor.update.check_failed"),
+            )
+        return
+    latest_tag = str(latest.get("tag") or "").strip()
+    if not latest_tag or not _is_version_newer(latest_tag, SAVEGAME_EDITOR_VERSION):
+        if verbose:
+            QMessageBox.information(
+                parent,
+                tr("savegame_editor.title"),
+                tr("savegame_editor.update.current").format(version=SAVEGAME_EDITOR_VERSION),
+            )
+        return
+    title = tr("savegame_editor.update.title")
+    text = (
+        tr("savegame_editor.update.text").format(
+            release_type=str(latest.get("type", "release") or "release"),
+            current=SAVEGAME_EDITOR_VERSION,
+            latest=latest_tag,
+            name=str(latest.get("name", latest_tag) or latest_tag),
+        )
+    )
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Information)
+    box.setWindowTitle(title)
+    box.setText(text)
+    open_btn = box.addButton(tr("savegame_editor.update.open"), QMessageBox.AcceptRole)
+    box.addButton(tr("savegame_editor.update.later"), QMessageBox.RejectRole)
+    box.exec()
+    if box.clickedButton() is open_btn:
+        url = str(latest.get("url") or "").strip()
+        if url:
+            try:
+                webbrowser.open(url)
+            except Exception:
+                pass
 
 
 class _SavegameKnownMapView(QGraphicsView):
@@ -188,6 +551,130 @@ class _SavegameEditorHost(QMainWindow):
         return ""
 
     @staticmethod
+    def _path_from_text(raw_path: str) -> Path:
+        txt = str(raw_path or "").strip()
+        if not txt:
+            return Path("")
+        expanded = os.path.expanduser(os.path.expandvars(txt))
+        try:
+            return Path(expanded)
+        except Exception:
+            return Path(txt)
+
+    @staticmethod
+    def _dedupe_paths(paths: list[Path]) -> list[Path]:
+        out: list[Path] = []
+        seen: set[str] = set()
+        for p in paths:
+            try:
+                key = str(p.resolve()).lower()
+            except Exception:
+                key = str(p).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(p)
+        return out
+
+    def _canonical_savegame_dir_from_input(self, raw_path: str) -> Path:
+        base = self._path_from_text(raw_path)
+        if not str(base):
+            return base
+        if base.is_file():
+            base = base.parent
+        suffix = ("My Games", "Freelancer", "Accts", "SinglePlayer")
+
+        def _completed_from_tail(path: Path) -> Path:
+            lower_parts = [str(p).lower() for p in path.parts]
+            target = [str(p).lower() for p in suffix]
+            max_overlap = min(len(lower_parts), len(target))
+            overlap = 0
+            for n in range(max_overlap, 0, -1):
+                if lower_parts[-n:] == target[:n]:
+                    overlap = n
+                    break
+            return path.joinpath(*suffix[overlap:])
+
+        candidates: list[Path] = [_completed_from_tail(base), base.joinpath(*suffix), base]
+        lname = base.name.lower()
+        if lname == "documents":
+            candidates.append(base.joinpath(*suffix))
+        if lname == "my games":
+            candidates.append(base / "Freelancer" / "Accts" / "SinglePlayer")
+        if lname == "freelancer":
+            candidates.append(base / "Accts" / "SinglePlayer")
+        if lname == "accts":
+            candidates.append(base / "SinglePlayer")
+        for anc in [base] + list(base.parents):
+            if anc.name.lower() == "documents":
+                candidates.append(anc.joinpath(*suffix))
+        candidates = self._dedupe_paths(candidates)
+        for cand in candidates:
+            if cand.exists() and cand.is_dir():
+                return cand
+        return candidates[0] if candidates else base
+
+    def _find_freelancer_exe(self, game_root: Path) -> Path | None:
+        root = Path(game_root)
+        if not root.exists():
+            return None
+        if root.is_file():
+            if root.name.lower() == "freelancer.exe":
+                return root
+            return None
+        exe_ci = ci_resolve(root, "EXE/Freelancer.exe")
+        if exe_ci is not None and exe_ci.exists() and exe_ci.is_file():
+            return exe_ci
+        exe_exact = root / "EXE" / "Freelancer.exe"
+        if exe_exact.exists() and exe_exact.is_file():
+            return exe_exact
+        if root.name.lower() == "exe":
+            exe_in = ci_find(root, "Freelancer.exe")
+            if exe_in is not None and exe_in.exists() and exe_in.is_file():
+                return exe_in
+        return None
+
+    def _canonical_game_dir_from_input(self, raw_path: str) -> Path:
+        base = self._path_from_text(raw_path)
+        if not str(base):
+            return base
+        if base.is_file() and base.name.lower() == "freelancer.exe":
+            par = base.parent
+            if par.name.lower() == "exe":
+                return par.parent
+            return par
+        if base.is_dir() and base.name.lower() == "exe":
+            exe_in = self._find_freelancer_exe(base)
+            if exe_in is not None:
+                return base.parent
+
+        # Prefer nearest valid ancestor first.
+        for cand in [base] + list(base.parents):
+            if cand.exists() and cand.is_dir() and self._find_freelancer_exe(cand) is not None:
+                return cand
+
+        # Limited downward search for EXE/Freelancer.exe when user entered a partial path.
+        if base.exists() and base.is_dir():
+            max_depth = 5
+            max_dirs = 2000
+            scanned = 0
+            queue: list[tuple[Path, int]] = [(base, 0)]
+            while queue and scanned < max_dirs:
+                cur, depth = queue.pop(0)
+                scanned += 1
+                if self._find_freelancer_exe(cur) is not None:
+                    return cur
+                if depth >= max_depth:
+                    continue
+                try:
+                    for ch in cur.iterdir():
+                        if ch.is_dir():
+                            queue.append((ch, depth + 1))
+                except Exception:
+                    continue
+        return base
+
+    @staticmethod
     def _savegame_editor_cache_key(game_path: str) -> str:
         gp = str(game_path or "").strip()
         if not gp:
@@ -205,12 +692,72 @@ class _SavegameEditorHost(QMainWindow):
 
     def _read_text_best_effort(self, path: Path) -> str:
         raw = path.read_bytes()
+        if raw.startswith(b"FLS1"):
+            # GENE cipher used by encrypted Freelancer saves (FLS1 header).
+            gene = (0x47, 0x65, 0x6E, 0x65)
+            out = bytearray()
+            i = 0
+            for b in raw[4:]:
+                gene_cipher = ((gene[i % 4] + i) % 256) & 0xFF
+                out.append(int(b) ^ (gene_cipher | 0x80))
+                i += 1
+            dec = bytes(out)
+            for enc in ("utf-8", "cp1252", "latin1"):
+                try:
+                    txt = dec.decode(enc)
+                    return txt.replace("\x85", "\n").replace("…", "\n")
+                except Exception:
+                    continue
+            return dec.decode("latin1", errors="ignore").replace("\x85", "\n").replace("…", "\n")
         for enc in ("utf-8", "cp1252", "latin1"):
             try:
                 return raw.decode(enc)
             except Exception:
                 continue
         return raw.decode("latin1", errors="ignore")
+
+    @staticmethod
+    def _fls1_crypt(data: bytes) -> bytes:
+        gene = (0x47, 0x65, 0x6E, 0x65)
+        out = bytearray()
+        for i, b in enumerate(data):
+            gene_cipher = ((gene[i % 4] + i) % 256) & 0xFF
+            out.append(int(b) ^ (gene_cipher | 0x80))
+        return bytes(out)
+
+    def _should_write_fls1(self, path: Path) -> bool:
+        try:
+            if path.exists() and path.read_bytes().startswith(b"FLS1"):
+                return True
+        except Exception:
+            pass
+        # Fallback: if known backups are encrypted, keep encrypted output format.
+        backup_candidates = [
+            path.with_name(f"{path.name}.FLAtlasBAK"),
+            path.with_name(f"{path.name}_BACKUP"),
+        ]
+        for bp in backup_candidates:
+            try:
+                if bp.exists() and bp.read_bytes().startswith(b"FLS1"):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _write_text_preserve_format(self, path: Path, text: str) -> None:
+        if self._should_write_fls1(path):
+            normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\x85")
+            try:
+                plain = normalized.encode("cp1252")
+            except UnicodeEncodeError:
+                plain = normalized.encode("latin1", errors="replace")
+            enc = b"FLS1" + self._fls1_crypt(plain)
+            path.write_bytes(enc)
+            return
+        try:
+            path.write_text(text, encoding="cp1252")
+        except UnicodeEncodeError:
+            path.write_text(text, encoding="utf-8")
 
     def _find_ini_section_bounds(self, lines: list[str], section_name: str, nick: str | None) -> tuple[int, int] | None:
         want = str(section_name or "").strip().lower()
@@ -455,6 +1002,7 @@ class _SavegameEditorHost(QMainWindow):
         roots = [str(game_path or "").strip(), str(self._primary_game_path() or "").strip(), str(self._fallback_game_path() or "").strip()]
         seen_root: set[str] = set()
         rep_by_faction: dict[str, dict[str, float]] = {}
+        all_factions: set[str] = set(str(f or "").strip() for f in self._cached_factions if str(f or "").strip())
         for root in roots:
             if not root or root.lower() in seen_root:
                 continue
@@ -472,6 +1020,7 @@ class _SavegameEditorHost(QMainWindow):
                 nick = self._entry_get_value(entries, "nickname").strip()
                 if not nick:
                     continue
+                all_factions.add(nick)
                 houses: dict[str, float] = {}
                 for k, v in entries:
                     if str(k or "").strip().lower() != "rep":
@@ -491,8 +1040,12 @@ class _SavegameEditorHost(QMainWindow):
                     target = str(target).strip()
                     if target:
                         houses[target] = float(value)
+                        all_factions.add(target)
                 if houses:
                     rep_by_faction[nick] = houses
+        if all_factions:
+            neutral_houses = {fac: 0.0 for fac in sorted(all_factions, key=str.lower)}
+            templates.append({"name": "NEUTRAL", "faction": "", "houses": neutral_houses})
         for nick in sorted(rep_by_faction.keys(), key=str.lower):
             label = self._faction_ui_label(nick).strip() or nick
             templates.append({"name": label, "faction": nick, "houses": dict(rep_by_faction.get(nick, {}))})
@@ -617,6 +1170,10 @@ class _SavegameEditorHost(QMainWindow):
                 n = str(nick or "").strip()
                 if n:
                     candidates.add(n)
+            for nick in list(item_data.get("trent_nicks", []) or []):
+                n = str(nick or "").strip()
+                if n:
+                    candidates.add(n)
         except Exception:
             pass
         for nick in sorted(candidates, key=str.lower):
@@ -639,6 +1196,21 @@ class _SavegameEditorHost(QMainWindow):
             return []
         try:
             return sorted(p for p in equip_dir.rglob("*.ini") if p.is_file())
+        except Exception:
+            return []
+
+    def _iter_character_ini_paths_for_usage(self, game_path: str) -> list[Path]:
+        gp = Path(str(game_path or "").strip())
+        if not gp.exists():
+            return []
+        data_dir = ci_find(gp, "DATA")
+        if not data_dir or not data_dir.is_dir():
+            return []
+        char_dir = ci_find(data_dir, "CHARACTERS")
+        if not char_dir or not char_dir.is_dir():
+            return []
+        try:
+            return sorted(p for p in char_dir.rglob("*.ini") if p.is_file())
         except Exception:
             return []
 
@@ -684,6 +1256,17 @@ class _SavegameEditorHost(QMainWindow):
                     ids_name = self._entry_get_value(entries, "ids_name").strip() or self._entry_get_value(entries, "strid_name").strip()
                     disp = self._resolve_ids_name(ids_name, str(root)) if ids_name else ""
                     out.setdefault(nick.lower(), disp or nick)
+        for fp in self._iter_character_ini_paths_for_usage(str(root)):
+            try:
+                sections = self._parser.parse(str(fp))
+            except Exception:
+                continue
+            for _sec, entries in sections:
+                nick = self._entry_get_value(entries, "nickname").strip()
+                if nick:
+                    ids_name = self._entry_get_value(entries, "ids_name").strip() or self._entry_get_value(entries, "strid_name").strip()
+                    disp = self._resolve_ids_name(ids_name, str(root)) if ids_name else ""
+                    out.setdefault(nick.lower(), disp or nick)
         return out
 
     def _savegame_editor_collect_item_data(self, game_path: str) -> dict[str, object]:
@@ -692,6 +1275,11 @@ class _SavegameEditorHost(QMainWindow):
             "item_name_map": {},
             "ship_nicks": [],
             "equip_nicks": [],
+            "trent_nicks": [],
+            "trent_body_nicks": [],
+            "trent_head_nicks": [],
+            "trent_lh_nicks": [],
+            "trent_rh_nicks": [],
             "ship_hardpoints_by_nick": {},
             "ship_hp_types_by_hardpoint_by_nick": {},
             "equip_type_by_nick": {},
@@ -709,6 +1297,11 @@ class _SavegameEditorHost(QMainWindow):
         item_name_map = self._sp_starter_item_display_names(root_path)
         ship_nicks: list[str] = []
         equip_nicks: list[str] = []
+        trent_nicks: list[str] = []
+        trent_body_nicks: list[str] = []
+        trent_head_nicks: list[str] = []
+        trent_lh_nicks: list[str] = []
+        trent_rh_nicks: list[str] = []
         ship_hardpoints_by_nick: dict[str, list[str]] = {}
         ship_hp_types_by_hardpoint_by_nick: dict[str, dict[str, list[str]]] = {}
         equip_type_by_nick: dict[str, str] = {}
@@ -784,10 +1377,50 @@ class _SavegameEditorHost(QMainWindow):
             equip_hp_types_by_nick = {k: sorted(v, key=str.lower) for k, v in hp_tmp.items() if v}
         except Exception:
             pass
+        try:
+            seen_trent: set[str] = set()
+            seen_body: set[str] = set()
+            seen_head: set[str] = set()
+            seen_lh: set[str] = set()
+            seen_rh: set[str] = set()
+            for fp in self._iter_character_ini_paths_for_usage(str(root_path)):
+                try:
+                    sections = self._parser.parse(str(fp))
+                except Exception:
+                    continue
+                for sec_name, entries in sections:
+                    nick = self._entry_get_value(entries, "nickname").strip()
+                    if not nick:
+                        continue
+                    key = nick.lower()
+                    if key in seen_trent:
+                        continue
+                    seen_trent.add(key)
+                    trent_nicks.append(nick)
+                    sec = str(sec_name or "").strip().lower()
+                    if sec == "body":
+                        if key not in seen_body:
+                            seen_body.add(key)
+                            trent_body_nicks.append(nick)
+                    elif sec == "head":
+                        if key not in seen_head:
+                            seen_head.add(key)
+                            trent_head_nicks.append(nick)
+                    elif sec in {"lefthand", "left_hand"}:
+                        if key not in seen_lh:
+                            seen_lh.add(key)
+                            trent_lh_nicks.append(nick)
+                    elif sec in {"righthand", "right_hand"}:
+                        if key not in seen_rh:
+                            seen_rh.add(key)
+                            trent_rh_nicks.append(nick)
+        except Exception:
+            pass
         hash_to_nick: dict[int, str] = {}
         nicks_for_hash: set[str] = set()
         nicks_for_hash.update(str(n).strip() for n in ship_nicks if str(n).strip())
         nicks_for_hash.update(str(n).strip() for n in equip_nicks if str(n).strip())
+        nicks_for_hash.update(str(n).strip() for n in trent_nicks if str(n).strip())
         nicks_for_hash.update(str(k).strip() for k in item_name_map.keys() if str(k).strip())
         for nick in nicks_for_hash:
             hid = self._fl_hash_nickname(nick)
@@ -797,6 +1430,11 @@ class _SavegameEditorHost(QMainWindow):
             "item_name_map": dict(item_name_map),
             "ship_nicks": sorted(set(ship_nicks), key=str.lower),
             "equip_nicks": sorted(set(equip_nicks), key=str.lower),
+            "trent_nicks": sorted(set(trent_nicks), key=str.lower),
+            "trent_body_nicks": sorted(set(trent_body_nicks), key=str.lower),
+            "trent_head_nicks": sorted(set(trent_head_nicks), key=str.lower),
+            "trent_lh_nicks": sorted(set(trent_lh_nicks), key=str.lower),
+            "trent_rh_nicks": sorted(set(trent_rh_nicks), key=str.lower),
             "ship_hardpoints_by_nick": dict(ship_hardpoints_by_nick),
             "ship_hp_types_by_hardpoint_by_nick": dict(ship_hp_types_by_hardpoint_by_nick),
             "equip_type_by_nick": dict(equip_type_by_nick),
@@ -939,7 +1577,9 @@ def open_savegame_editor(self):
     lay.setMenuBar(menu_bar)
     file_menu = menu_bar.addMenu(tr("savegame_editor.menu.file"))
     settings_menu = menu_bar.addMenu(tr("savegame_editor.menu.settings"))
+    help_menu = menu_bar.addMenu(tr("savegame_editor.menu.help"))
     language_menu = menu_bar.addMenu(_tr_or("savegame_editor.menu.language", "Language"))
+    theme_menu = settings_menu.addMenu(_tr_or("savegame_editor.menu.theme", "Theme"))
 
     def _set_editor_title(path: Path | None = None) -> None:
         base = f"{tr('savegame_editor.title')} {SAVEGAME_EDITOR_VERSION}"
@@ -999,7 +1639,7 @@ def open_savegame_editor(self):
     right_tabs.addTab(tab_locked, tr("savegame_editor.map_tab.locked"))
     right_tabs.addTab(tab_visited, tr("savegame_editor.map_tab.visited"))
     right_tabs.addTab(tab_reputation, tr("savegame_editor.tab.reputation"))
-    right_tabs.addTab(tab_trent, "Customize Trent")
+    right_tabs.addTab(tab_trent, tr("savegame_editor.tab.trent"))
     right_tabs.addTab(tab_ship, tr("savegame_editor.tab.ship"))
     content_row.addWidget(sidebar, 0)
     content_row.addWidget(right_tabs, 1)
@@ -1036,7 +1676,7 @@ def open_savegame_editor(self):
         w.setMaximumWidth(sidebar_field_width)
     form.addRow(tr("savegame_editor.rank"), rank_spin)
     form.addRow(tr("savegame_editor.money"), money_spin)
-    form.addRow("Description", description_edit)
+    form.addRow(tr("savegame_editor.description"), description_edit)
     form.addRow(tr("savegame_editor.rep_group"), rep_group_cb)
     form.addRow(tr("savegame_editor.system"), system_cb)
     form.addRow(tr("savegame_editor.base"), base_cb)
@@ -1046,6 +1686,12 @@ def open_savegame_editor(self):
     story_lock_lbl.setStyleSheet("color: #9aa0a6;")
     form.addRow("", story_lock_lbl)
     sidebar_l.addLayout(form)
+    validate_btn = QPushButton(tr("savegame_editor.validate"), dlg)
+    sidebar_l.addWidget(validate_btn)
+    validate_help_lbl = QLabel(tr("savegame_editor.validate_help"), dlg)
+    validate_help_lbl.setWordWrap(True)
+    validate_help_lbl.setStyleSheet("color: #9aa0a6;")
+    sidebar_l.addWidget(validate_help_lbl)
     sidebar_l.addStretch(1)
 
     locked_map_l = QVBoxLayout(tab_locked)
@@ -1071,6 +1717,63 @@ def open_savegame_editor(self):
     visit_unlock_all_btn = QPushButton(tr("savegame_editor.visit_unlock_all"), tab_visited)
     visited_map_l.addWidget(visit_unlock_all_btn, 0, Qt.AlignRight)
 
+    def _map_colors_for_theme(theme_name: str) -> dict[str, QColor]:
+        t = str(theme_name or "Standard").strip()
+        if t == "Light":
+            return {
+                "bg": QColor("#f6f8fc"),
+                "line_inactive": QColor("#9aa6b2"),
+                "line_locked": QColor("#d64545"),
+                "line_visited": QColor("#2b6ed2"),
+                "node_inactive": QColor("#8c99a8"),
+                "node_locked": QColor("#d64545"),
+                "node_visited": QColor("#2f9e44"),
+                "node_outline": QColor("#5f6b7a"),
+                "text_inactive": QColor("#425166"),
+                "text_locked": QColor("#7f1d1d"),
+                "text_visited": QColor("#1f2937"),
+                "text_empty": QColor("#5b6778"),
+            }
+        if t == "High Contrast":
+            return {
+                "bg": QColor("#000000"),
+                "line_inactive": QColor("#8f8f8f"),
+                "line_locked": QColor("#ff3333"),
+                "line_visited": QColor("#00a6ff"),
+                "node_inactive": QColor("#9f9f9f"),
+                "node_locked": QColor("#ff3333"),
+                "node_visited": QColor("#00ff66"),
+                "node_outline": QColor("#ffffff"),
+                "text_inactive": QColor("#d7d7d7"),
+                "text_locked": QColor("#ff9999"),
+                "text_visited": QColor("#ffffff"),
+                "text_empty": QColor("#ffffff"),
+            }
+        return {
+            "bg": QColor("#0f141d"),
+            "line_inactive": QColor("#8a8a8a"),
+            "line_locked": QColor("#d33f49"),
+            "line_visited": QColor("#3c82dc"),
+            "node_inactive": QColor("#9aa0a6"),
+            "node_locked": QColor("#d33f49"),
+            "node_visited": QColor("#2f9e44"),
+            "node_outline": QColor("#202020"),
+            "text_inactive": QColor("#a7a7a7"),
+            "text_locked": QColor("#ffd5d8"),
+            "text_visited": QColor("#d8d8d8"),
+            "text_empty": QColor("#a7a7a7"),
+        }
+
+    map_colors: dict[str, QColor] = _map_colors_for_theme(self._cfg.get("settings.theme", "Standard"))
+
+    def _apply_map_theme(theme_name: str) -> None:
+        nonlocal map_colors
+        map_colors = _map_colors_for_theme(theme_name)
+        locked_scene.setBackgroundBrush(QBrush(map_colors["bg"]))
+        visited_scene.setBackgroundBrush(QBrush(map_colors["bg"]))
+
+    _apply_map_theme(self._cfg.get("settings.theme", "Standard"))
+
     tpl_row = QHBoxLayout()
     tpl_row.addWidget(QLabel(tr("savegame_editor.template")))
     template_cb = QComboBox(dlg)
@@ -1088,6 +1791,11 @@ def open_savegame_editor(self):
     item_name_map: dict[str, str] = dict(item_data.get("item_name_map", {}) or {})
     ship_nicks: list[str] = list(item_data.get("ship_nicks", []) or [])
     equip_nicks: list[str] = list(item_data.get("equip_nicks", []) or [])
+    trent_nicks: list[str] = list(item_data.get("trent_nicks", []) or [])
+    trent_body_nicks: list[str] = list(item_data.get("trent_body_nicks", []) or [])
+    trent_head_nicks: list[str] = list(item_data.get("trent_head_nicks", []) or [])
+    trent_lh_nicks: list[str] = list(item_data.get("trent_lh_nicks", []) or [])
+    trent_rh_nicks: list[str] = list(item_data.get("trent_rh_nicks", []) or [])
     ship_hardpoints_by_nick: dict[str, list[str]] = {
         str(k): list(v) for k, v in dict(item_data.get("ship_hardpoints_by_nick", {}) or {}).items()
     }
@@ -1105,7 +1813,6 @@ def open_savegame_editor(self):
     jump_data = self._savegame_editor_collect_jump_connections(game_path)
 
     trent_form = QFormLayout()
-    voice_edit = QLineEdit(dlg)
     com_body_cb = QComboBox(dlg)
     com_head_cb = QComboBox(dlg)
     com_lh_cb = QComboBox(dlg)
@@ -1117,15 +1824,14 @@ def open_savegame_editor(self):
     trent_item_cbs = [com_body_cb, com_head_cb, com_lh_cb, com_rh_cb, body_cb, head_cb, lh_cb, rh_cb]
     for cb in trent_item_cbs:
         cb.setEditable(True)
-    trent_form.addRow("Voice", voice_edit)
-    trent_form.addRow("Com Body", com_body_cb)
-    trent_form.addRow("Com Head", com_head_cb)
-    trent_form.addRow("Com Left Hand", com_lh_cb)
-    trent_form.addRow("Com Right Hand", com_rh_cb)
-    trent_form.addRow("Body", body_cb)
-    trent_form.addRow("Head", head_cb)
-    trent_form.addRow("Left Hand", lh_cb)
-    trent_form.addRow("Right Hand", rh_cb)
+    trent_form.addRow(tr("savegame_editor.trent.com_body"), com_body_cb)
+    trent_form.addRow(tr("savegame_editor.trent.com_head"), com_head_cb)
+    trent_form.addRow(tr("savegame_editor.trent.com_lh"), com_lh_cb)
+    trent_form.addRow(tr("savegame_editor.trent.com_rh"), com_rh_cb)
+    trent_form.addRow(tr("savegame_editor.trent.body"), body_cb)
+    trent_form.addRow(tr("savegame_editor.trent.head"), head_cb)
+    trent_form.addRow(tr("savegame_editor.trent.lh"), lh_cb)
+    trent_form.addRow(tr("savegame_editor.trent.rh"), rh_cb)
     trent_l.addLayout(trent_form)
     trent_l.addStretch(1)
 
@@ -1156,8 +1862,10 @@ def open_savegame_editor(self):
     equip_btn_row = QHBoxLayout()
     equip_add_btn = QPushButton(tr("savegame_editor.btn.add_equip"), dlg)
     equip_del_btn = QPushButton(tr("savegame_editor.btn.remove_selected"), dlg)
+    equip_autofix_btn = QPushButton(tr("savegame_editor.btn.autofix_hardpoints"), dlg)
     equip_btn_row.addWidget(equip_add_btn)
     equip_btn_row.addWidget(equip_del_btn)
+    equip_btn_row.addWidget(equip_autofix_btn)
     equip_btn_row.addStretch(1)
     ship_l.addLayout(equip_btn_row)
 
@@ -1203,10 +1911,10 @@ def open_savegame_editor(self):
     bottom_row.addWidget(close_btn)
     lay.addLayout(bottom_row)
     footer = QLabel(
-        (
-            f"Developted by Aldenmar Odin - flathack - Version {SAVEGAME_EDITOR_VERSION} - "
-            f"<a href=\"{DISCORD_INVITE_URL}\">Join Discord Server</a> - "
-            f"<a href=\"{BUG_REPORT_URL}\">Report Bugs</a>"
+        tr("savegame_editor.footer_html").format(
+            version=SAVEGAME_EDITOR_VERSION,
+            discord=DISCORD_INVITE_URL,
+            bugs=BUG_REPORT_URL,
         ),
         dlg,
     )
@@ -1227,6 +1935,115 @@ def open_savegame_editor(self):
     }
     map_state: dict[str, object] = {"locked_ids": set(), "visit_ids": set()}
 
+    def _clear_maps() -> None:
+        locked_scene.clear()
+        visited_scene.clear()
+        empty = QRectF(0, 0, 1, 1)
+        locked_scene.setSceneRect(empty)
+        visited_scene.setSceneRect(empty)
+        locked_view.set_base_rect(empty)
+        visited_view.set_base_rect(empty)
+        map_state["locked_ids"] = set()
+        map_state["visit_ids"] = set()
+
+    def _set_no_savegame_state() -> None:
+        state["path"] = None
+        state["locked_ids"] = set()
+        state["visit_ids"] = set()
+        state["visit_line_by_id"] = {}
+        rank_spin.setValue(0)
+        money_spin.setValue(0)
+        description_edit.clear()
+        rep_group_cb.setCurrentIndex(-1)
+        rep_group_cb.setEditText("")
+        system_cb.setCurrentIndex(-1)
+        system_cb.setEditText("")
+        base_cb.clear()
+        for cb in trent_item_cbs:
+            cb.setCurrentIndex(-1)
+            cb.setEditText("")
+        ship_archetype_cb.setCurrentIndex(-1)
+        ship_archetype_cb.setEditText("")
+        equip_tbl.setRowCount(0)
+        cargo_tbl.setRowCount(0)
+        houses_tbl.setRowCount(0)
+        _set_story_lock_ui(False, 0)
+        _clear_maps()
+        for w in (
+            rank_spin,
+            money_spin,
+            description_edit,
+            rep_group_cb,
+            system_cb,
+            base_cb,
+            com_body_cb,
+            com_head_cb,
+            com_lh_cb,
+            com_rh_cb,
+            body_cb,
+            head_cb,
+            lh_cb,
+            rh_cb,
+            ship_archetype_cb,
+            equip_tbl,
+            cargo_tbl,
+            houses_tbl,
+            template_cb,
+            apply_template_btn,
+            unlock_all_btn,
+            visit_unlock_all_btn,
+            equip_add_btn,
+            equip_del_btn,
+            equip_autofix_btn,
+            cargo_add_btn,
+            cargo_del_btn,
+            right_tabs,
+            validate_btn,
+            validate_help_lbl,
+        ):
+            w.setEnabled(False)
+        act_file_reload.setEnabled(False)
+        act_file_save.setEnabled(False)
+
+    def _set_savegame_loaded_state() -> None:
+        for w in (
+            rank_spin,
+            money_spin,
+            description_edit,
+            rep_group_cb,
+            system_cb,
+            base_cb,
+            com_body_cb,
+            com_head_cb,
+            com_lh_cb,
+            com_rh_cb,
+            body_cb,
+            head_cb,
+            lh_cb,
+            rh_cb,
+            ship_archetype_cb,
+            equip_tbl,
+            cargo_tbl,
+            houses_tbl,
+            template_cb,
+            apply_template_btn,
+            unlock_all_btn,
+            visit_unlock_all_btn,
+            equip_add_btn,
+            equip_del_btn,
+            equip_autofix_btn,
+            cargo_add_btn,
+            cargo_del_btn,
+            right_tabs,
+            validate_btn,
+            validate_help_lbl,
+        ):
+            w.setEnabled(True)
+        template_cb.setEnabled(bool(templates))
+        apply_template_btn.setEnabled(bool(templates))
+        act_file_reload.setEnabled(True)
+        act_file_save.setEnabled(True)
+
     def _set_loading(active: bool) -> None:
         load_progress.setVisible(active)
         if active:
@@ -1240,8 +2057,260 @@ def open_savegame_editor(self):
     def _save_dir() -> Path:
         txt = save_dir_edit.text().strip()
         if txt:
-            return Path(txt)
+            return self._canonical_savegame_dir_from_input(txt)
         return default_dir
+
+    def _token_to_known_nick(token: str) -> str:
+        raw = str(token or "").strip()
+        if not raw:
+            return ""
+        if raw.isdigit():
+            try:
+                hid = int(raw)
+            except Exception:
+                hid = 0
+            if hid > 0:
+                mapped = str(hash_to_nick.get(hid, "") or "").strip()
+                if mapped:
+                    return mapped
+                mapped2 = str(numeric_id_map.get(hid, "") or "").strip()
+                if mapped2:
+                    return mapped2
+        return raw
+
+    def _validate_savegame() -> None:
+        cur = state.get("path")
+        if not isinstance(cur, Path):
+            QMessageBox.information(dlg, tr("savegame_editor.title"), tr("savegame_editor.no_file"))
+            return
+        fixed_hardpoints = _autofix_invalid_hardpoints(show_result=False)
+        try:
+            raw = self._read_text_best_effort(cur)
+        except Exception as exc:
+            QMessageBox.warning(dlg, tr("savegame_editor.title"), str(exc))
+            return
+        lines = raw.splitlines()
+        bounds = self._find_ini_section_bounds(lines, "Player", None)
+        if bounds is None:
+            QMessageBox.warning(dlg, tr("savegame_editor.title"), tr("savegame_editor.validate.player_missing"))
+            return
+        s, e = bounds
+        player_lines = lines[s:e]
+
+        known_ships = {str(v).strip().lower() for v in ship_nicks if str(v).strip()}
+        known_equip = {str(v).strip().lower() for v in equip_nicks if str(v).strip()}
+        known_factions = {str(v).strip().lower() for v in self._cached_factions if str(v).strip()}
+        known_systems = {str(v).strip().upper() for v in system_to_bases.keys() if str(v).strip()}
+        known_bases = {
+            str(row.get("nickname", "")).strip().upper()
+            for rows in system_to_bases.values()
+            for row in list(rows or [])
+            if str(row.get("nickname", "")).strip()
+        }
+        known_visit_ids = {int(k) for k in numeric_id_map.keys() if int(k) > 0}
+        known_nicks_generic = {str(v).strip().lower() for v in numeric_id_map.values() if str(v).strip()}
+
+        issues: list[str] = []
+        suggestions: list[str] = []
+        bad_ships: set[str] = set()
+        bad_equip: set[str] = set()
+        bad_cargo: set[str] = set()
+        bad_factions: set[str] = set()
+        bad_visit: set[str] = set()
+        bad_systems: set[str] = set()
+        bad_bases: set[str] = set()
+        skipped_visit_unknown_numeric = 0
+
+        for raw_line in player_lines[1:]:
+            line = str(raw_line).strip()
+            if not line or line.startswith(";") or "=" not in line:
+                continue
+            key, val = line.split("=", 1)
+            k = key.strip().lower()
+            v = val.strip()
+            if k == "ship_archetype":
+                nick = _token_to_known_nick(v).strip()
+                if nick and nick.lower() not in known_ships:
+                    bad_ships.add(v.strip())
+            elif k == "equip":
+                parts = [x.strip() for x in v.split(",")]
+                item_tok = parts[0] if parts else ""
+                nick = _token_to_known_nick(item_tok).strip()
+                if nick and nick.lower() not in known_equip:
+                    bad_equip.add(item_tok)
+            elif k == "cargo":
+                parts = [x.strip() for x in v.split(",")]
+                item_tok = parts[0] if parts else ""
+                nick = _token_to_known_nick(item_tok).strip()
+                if nick and nick.lower() not in known_equip:
+                    bad_cargo.add(item_tok)
+            elif k == "rep_group":
+                fac = str(v or "").strip()
+                fac_nick = self._faction_from_ui(fac) or fac
+                if fac_nick and fac_nick.lower() not in known_factions:
+                    bad_factions.add(fac)
+            elif k == "house":
+                parts = [x.strip() for x in v.split(",", 1)]
+                if len(parts) >= 2:
+                    fac = str(parts[1] or "").strip()
+                    if fac and fac.lower() not in known_factions:
+                        bad_factions.add(fac)
+            elif k == "visit":
+                parts = [x.strip() for x in v.split(",", 1)]
+                tok = parts[0] if parts else ""
+                if not tok:
+                    continue
+                if tok.isdigit():
+                    try:
+                        vid = int(tok)
+                    except Exception:
+                        vid = 0
+                    if vid > 0:
+                        mapped = str(hash_to_nick.get(vid, "") or numeric_id_map.get(vid, "") or "").strip()
+                        if not mapped:
+                            skipped_visit_unknown_numeric += 1
+                        elif mapped.lower() not in known_nicks_generic:
+                            bad_visit.add(tok)
+                else:
+                    nick = _token_to_known_nick(tok)
+                    if nick and (not str(nick).isdigit()) and nick.lower() not in known_nicks_generic:
+                        bad_visit.add(tok)
+            elif k == "system":
+                sys_nick = str(v or "").strip().upper()
+                if sys_nick and sys_nick not in known_systems:
+                    bad_systems.add(v.strip())
+            elif k == "base":
+                base_nick = str(v or "").strip().upper()
+                if base_nick and base_nick not in known_bases:
+                    bad_bases.add(v.strip())
+
+        current_ship = _combo_item_nick(ship_archetype_cb)
+        bad_ship_ui = bool(current_ship and current_ship.lower() not in known_ships)
+        bad_equip_rows: list[int] = []
+        for r in range(equip_tbl.rowCount()):
+            item_cb = equip_tbl.cellWidget(r, 0)
+            if not isinstance(item_cb, QComboBox):
+                continue
+            nick = _combo_item_nick(item_cb).strip()
+            if nick and nick.lower() not in known_equip:
+                bad_equip_rows.append(r)
+        bad_cargo_rows: list[int] = []
+        for r in range(cargo_tbl.rowCount()):
+            item_cb = cargo_tbl.cellWidget(r, 0)
+            if not isinstance(item_cb, QComboBox):
+                continue
+            nick = _combo_item_nick(item_cb).strip()
+            if nick and nick.lower() not in known_equip:
+                bad_cargo_rows.append(r)
+        bad_rep_group_ui = False
+        current_rep = _current_rep_group_nick()
+        if current_rep and current_rep.lower() not in known_factions:
+            bad_rep_group_ui = True
+        bad_house_rows: list[int] = []
+        for r in range(houses_tbl.rowCount()):
+            it = houses_tbl.item(r, 0)
+            fac = str(it.data(Qt.UserRole) if it else "").strip()
+            if fac and fac.lower() not in known_factions:
+                bad_house_rows.append(r)
+        current_system_ui = _current_system_nick()
+        bad_system_ui = bool(current_system_ui and current_system_ui.upper() not in known_systems)
+        current_base_ui = _current_base_nick()
+        bad_base_ui = bool(current_base_ui and current_base_ui.upper() not in known_bases)
+        current_visit_ids = set(int(v) for v in set(state.get("visit_ids", set()) or set()) if int(v) > 0)
+        bad_visit_ids_ui: set[int] = set()
+        for vid in current_visit_ids:
+            mapped = str(hash_to_nick.get(int(vid), "") or numeric_id_map.get(int(vid), "") or "").strip()
+            if mapped and mapped.lower() not in known_nicks_generic:
+                bad_visit_ids_ui.add(int(vid))
+
+        if bad_ships:
+            issues.append(tr("savegame_editor.validate.issue.ship").format(items=", ".join(sorted(bad_ships))))
+        if bad_equip:
+            issues.append(tr("savegame_editor.validate.issue.equip").format(items=", ".join(sorted(bad_equip)[:25])))
+        if bad_cargo:
+            issues.append(tr("savegame_editor.validate.issue.cargo").format(items=", ".join(sorted(bad_cargo)[:25])))
+        if bad_factions:
+            issues.append(tr("savegame_editor.validate.issue.factions").format(items=", ".join(sorted(bad_factions))))
+        if bad_visit:
+            issues.append(tr("savegame_editor.validate.issue.visited").format(items=", ".join(sorted(bad_visit)[:40])))
+        if bad_systems:
+            issues.append(tr("savegame_editor.validate.issue.systems").format(items=", ".join(sorted(bad_systems))))
+        if bad_bases:
+            issues.append(tr("savegame_editor.validate.issue.bases").format(items=", ".join(sorted(bad_bases))))
+
+        if bad_ship_ui:
+            suggestions.append(tr("savegame_editor.validate.suggest.ship"))
+        if bad_equip_rows:
+            suggestions.append(tr("savegame_editor.validate.suggest.equip").format(count=len(bad_equip_rows)))
+        if bad_cargo_rows:
+            suggestions.append(tr("savegame_editor.validate.suggest.cargo").format(count=len(bad_cargo_rows)))
+        if bad_rep_group_ui:
+            suggestions.append(tr("savegame_editor.validate.suggest.rep_group"))
+        if bad_house_rows:
+            suggestions.append(tr("savegame_editor.validate.suggest.houses").format(count=len(bad_house_rows)))
+        if bad_system_ui:
+            suggestions.append(tr("savegame_editor.validate.suggest.system"))
+        if bad_base_ui:
+            suggestions.append(tr("savegame_editor.validate.suggest.base"))
+        if bad_visit_ids_ui:
+            suggestions.append(tr("savegame_editor.validate.suggest.visited").format(count=len(bad_visit_ids_ui)))
+        if skipped_visit_unknown_numeric > 0:
+            suggestions.append(tr("savegame_editor.validate.suggest.visited_skip").format(count=skipped_visit_unknown_numeric))
+        if fixed_hardpoints > 0:
+            suggestions.append(tr("savegame_editor.validate.autofix_hardpoints_applied").format(count=fixed_hardpoints))
+
+        if not issues:
+            msg = tr("savegame_editor.validate.ok")
+            if fixed_hardpoints > 0:
+                msg += "\n\n" + tr("savegame_editor.validate.autofix_hardpoints_applied").format(count=fixed_hardpoints)
+            QMessageBox.information(
+                dlg,
+                tr("savegame_editor.title"),
+                msg,
+            )
+            return
+
+        report = tr("savegame_editor.validate.issues_title") + "\n\n" + "\n".join(f"- {row}" for row in issues)
+        if suggestions:
+            report += "\n\n" + tr("savegame_editor.validate.suggest_title") + "\n" + "\n".join(f"- {row}" for row in suggestions)
+
+        box = QMessageBox(dlg)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle(tr("savegame_editor.title"))
+        box.setText(report)
+        cleanup_btn = None
+        if suggestions:
+            cleanup_btn = box.addButton(tr("savegame_editor.validate.cleanup_apply"), QMessageBox.AcceptRole)
+        box.addButton(tr("dlg.close"), QMessageBox.RejectRole)
+        box.exec()
+        if cleanup_btn is None or box.clickedButton() is not cleanup_btn:
+            return
+
+        if bad_ship_ui:
+            ship_archetype_cb.setCurrentIndex(-1)
+            ship_archetype_cb.setEditText("")
+        for r in sorted(bad_equip_rows, reverse=True):
+            equip_tbl.removeRow(r)
+        for r in sorted(bad_cargo_rows, reverse=True):
+            cargo_tbl.removeRow(r)
+        if bad_rep_group_ui:
+            rep_group_cb.setCurrentIndex(-1)
+            rep_group_cb.setEditText("")
+        for r in sorted(bad_house_rows, reverse=True):
+            houses_tbl.removeRow(r)
+        if bad_system_ui:
+            system_cb.setCurrentIndex(-1)
+            system_cb.setEditText("")
+            _rebuild_base_combo("", "")
+        if bad_base_ui:
+            base_cb.setCurrentIndex(-1)
+            base_cb.setEditText("")
+        if bad_visit_ids_ui:
+            cleaned_visits = set(int(v) for v in current_visit_ids if int(v) in known_visit_ids)
+            _set_pending_visit_ids(cleaned_visits)
+        _refresh_hardpoint_hint()
+        self.statusBar().showMessage(tr("savegame_editor.pending_changes"))
+        QMessageBox.information(dlg, tr("savegame_editor.title"), tr("savegame_editor.validate.cleanup_done"))
 
     def _fmt_rep(v: float) -> str:
         return f"{float(v):.6f}".rstrip("0").rstrip(".")
@@ -1438,8 +2507,14 @@ def open_savegame_editor(self):
         )
 
     _setup_item_combo(ship_archetype_cb, ship_nicks)
-    for cb in trent_item_cbs:
-        _setup_item_combo(cb, equip_nicks)
+    _setup_item_combo(com_body_cb, trent_body_nicks or trent_nicks or equip_nicks)
+    _setup_item_combo(body_cb, trent_body_nicks or trent_nicks or equip_nicks)
+    _setup_item_combo(com_head_cb, trent_head_nicks or trent_nicks or equip_nicks)
+    _setup_item_combo(head_cb, trent_head_nicks or trent_nicks or equip_nicks)
+    _setup_item_combo(com_lh_cb, trent_lh_nicks or trent_nicks or equip_nicks)
+    _setup_item_combo(lh_cb, trent_lh_nicks or trent_nicks or equip_nicks)
+    _setup_item_combo(com_rh_cb, trent_rh_nicks or trent_nicks or equip_nicks)
+    _setup_item_combo(rh_cb, trent_rh_nicks or trent_nicks or equip_nicks)
 
     def _update_rep_color(spin: QDoubleSpinBox, value: float) -> None:
         if value < -0.61:
@@ -1565,7 +2640,8 @@ def open_savegame_editor(self):
         systems_obj = dict(jump_data.get("systems", {}) or {})
         edges = list(jump_data.get("edges", []) or [])
         if not systems_obj or not edges:
-            locked_scene.addText(tr("savegame_editor.ids_none"))
+            txt = locked_scene.addText(tr("savegame_editor.ids_none"))
+            txt.setDefaultTextColor(map_colors["text_empty"])
             locked_view.set_base_rect(locked_scene.itemsBoundingRect().adjusted(-12, -12, 12, 12))
             return
         positions: dict[str, tuple[float, float]] = {}
@@ -1578,7 +2654,8 @@ def open_savegame_editor(self):
             xs.append(x)
             ys.append(y)
         if not xs or not ys:
-            locked_scene.addText(tr("savegame_editor.ids_none"))
+            txt = locked_scene.addText(tr("savegame_editor.ids_none"))
+            txt.setDefaultTextColor(map_colors["text_empty"])
             return
         min_x = min(xs)
         max_x = max(xs)
@@ -1609,10 +2686,10 @@ def open_savegame_editor(self):
             is_locked = any(i in locked_ids for i in ids)
             typ = str(edge.get("type", "hole") or "hole").lower()
             if is_locked:
-                col = QColor("#d33f49")
+                col = map_colors["line_locked"]
                 width = 2.4
             else:
-                col = QColor("#8a8a8a")
+                col = map_colors["line_inactive"]
                 width = 1.3
             pen = QPen(col, width)
             pen.setCosmetic(True)
@@ -1623,13 +2700,13 @@ def open_savegame_editor(self):
             nick = str(row.get("nickname", key) or key)
             disp = str(row.get("display", nick) or nick)
             r = 7.0 if key in locked_systems else 5.0
-            fill = QColor("#d33f49") if key in locked_systems else QColor("#9aa0a6")
-            pen = QPen(QColor("#202020"), 1.0)
+            fill = map_colors["node_locked"] if key in locked_systems else map_colors["node_inactive"]
+            pen = QPen(map_colors["node_outline"], 1.0)
             pen.setCosmetic(True)
             node = locked_scene.addEllipse(pt.x() - r, pt.y() - r, r * 2.0, r * 2.0, pen, QBrush(fill))
             node.setData(0, key)
             label = locked_scene.addText(disp)
-            label.setDefaultTextColor(QColor("#ffd5d8") if key in locked_systems else QColor("#a7a7a7"))
+            label.setDefaultTextColor(map_colors["text_locked"] if key in locked_systems else map_colors["text_inactive"])
             label.setPos(pt.x() + 8.0, pt.y() - 10.0)
             label.setData(0, key)
 
@@ -1643,7 +2720,8 @@ def open_savegame_editor(self):
         systems_obj = dict(jump_data.get("systems", {}) or {})
         edges = list(jump_data.get("edges", []) or [])
         if not systems_obj:
-            visited_scene.addText(tr("savegame_editor.ids_none"))
+            txt = visited_scene.addText(tr("savegame_editor.ids_none"))
+            txt.setDefaultTextColor(map_colors["text_empty"])
             visited_view.set_base_rect(visited_scene.itemsBoundingRect().adjusted(-12, -12, 12, 12))
             return
         positions: dict[str, tuple[float, float]] = {}
@@ -1660,7 +2738,8 @@ def open_savegame_editor(self):
             xs.append(x)
             ys.append(y)
         if not xs or not ys:
-            visited_scene.addText(tr("savegame_editor.ids_none"))
+            txt = visited_scene.addText(tr("savegame_editor.ids_none"))
+            txt.setDefaultTextColor(map_colors["text_empty"])
             return
         min_x = min(xs)
         max_x = max(xs)
@@ -1687,7 +2766,7 @@ def open_savegame_editor(self):
             if edge_visited:
                 visited_systems.add(a)
                 visited_systems.add(b)
-            pen = QPen(QColor("#3c82dc") if edge_visited else QColor("#8a8a8a"), 2.0 if edge_visited else 1.2)
+            pen = QPen(map_colors["line_visited"] if edge_visited else map_colors["line_inactive"], 2.0 if edge_visited else 1.2)
             pen.setCosmetic(True)
             visited_scene.addLine(node_pos[a].x(), node_pos[a].y(), node_pos[b].x(), node_pos[b].y(), pen)
         for key, pt in node_pos.items():
@@ -1695,13 +2774,13 @@ def open_savegame_editor(self):
             disp = str(row.get("display", key) or key)
             is_visited = key in visited_systems
             r = 7.0 if is_visited else 5.0
-            fill = QColor("#2f9e44") if is_visited else QColor("#9aa0a6")
-            pen = QPen(QColor("#202020"), 1.0)
+            fill = map_colors["node_visited"] if is_visited else map_colors["node_inactive"]
+            pen = QPen(map_colors["node_outline"], 1.0)
             pen.setCosmetic(True)
             node = visited_scene.addEllipse(pt.x() - r, pt.y() - r, r * 2.0, r * 2.0, pen, QBrush(fill))
             node.setData(0, key)
             label = visited_scene.addText(disp)
-            label.setDefaultTextColor(QColor("#d8d8d8") if is_visited else QColor("#a7a7a7"))
+            label.setDefaultTextColor(map_colors["text_visited"] if is_visited else map_colors["text_inactive"])
             label.setPos(pt.x() + 8.0, pt.y() - 10.0)
             label.setData(0, key)
         rect = visited_scene.itemsBoundingRect().adjusted(-24, -24, 24, 24)
@@ -1831,6 +2910,46 @@ def open_savegame_editor(self):
             _refresh_equip_row_filters(r)
         _refresh_hardpoint_hint()
 
+    def _autofix_invalid_hardpoints(*, show_result: bool = True) -> int:
+        ship_nick = _current_ship_nick()
+        allowed = {str(hp or "").strip().lower() for hp in _ship_hardpoints(ship_nick) if str(hp or "").strip()}
+        if not allowed:
+            if show_result:
+                QMessageBox.information(dlg, tr("savegame_editor.title"), tr("savegame_editor.autofix.no_ship_hp"))
+            return 0
+        fixed_rows = 0
+        fixed_hps: list[str] = []
+        for r in range(equip_tbl.rowCount()):
+            hp_cb = equip_tbl.cellWidget(r, 1)
+            if not isinstance(hp_cb, QComboBox):
+                continue
+            hp = str(hp_cb.currentText() or "").strip()
+            if not hp:
+                continue
+            if hp.lower() in allowed:
+                continue
+            _set_hardpoint_combo_value(hp_cb, "")
+            fixed_rows += 1
+            fixed_hps.append(hp)
+        if fixed_rows <= 0:
+            if show_result:
+                QMessageBox.information(dlg, tr("savegame_editor.title"), tr("savegame_editor.autofix.none_needed"))
+            return 0
+        _refresh_equip_hardpoint_choices()
+        self.statusBar().showMessage(tr("savegame_editor.pending_changes"))
+        if show_result:
+            hp_list = ", ".join(sorted(set(fixed_hps), key=str.lower)[:20])
+            QMessageBox.information(
+                dlg,
+                tr("savegame_editor.title"),
+                tr("savegame_editor.autofix.done").format(
+                    count=fixed_rows,
+                    ship=_item_ui_label(ship_nick) or ship_nick or "?",
+                    hps=hp_list or "-",
+                ),
+            )
+        return fixed_rows
+
     def _current_system_nick() -> str:
         data = str(system_cb.currentData() or "").strip()
         if data:
@@ -1858,10 +2977,7 @@ def open_savegame_editor(self):
         system_cb.setEnabled(not locked)
         base_cb.setEnabled(not locked)
         if locked:
-            story_lock_lbl.setText(
-                f"Story mission detected (MissionNum = {int(mission_num)}). "
-                "System/Base editing is locked for this savegame."
-            )
+            story_lock_lbl.setText(tr("savegame_editor.story_lock").format(mn=int(mission_num)))
             story_lock_lbl.setVisible(True)
         else:
             story_lock_lbl.setText("")
@@ -1953,7 +3069,6 @@ def open_savegame_editor(self):
         rep_group = ""
         system = ""
         base = ""
-        voice = ""
         com_body = ""
         com_head = ""
         com_lefthand = ""
@@ -1991,8 +3106,6 @@ def open_savegame_editor(self):
                 system = v
             elif k == "base":
                 base = v
-            elif k == "voice":
-                voice = v
             elif k == "com_body":
                 com_body = v
             elif k == "com_head":
@@ -2050,7 +3163,6 @@ def open_savegame_editor(self):
         money_spin.setValue(max(money_spin.minimum(), min(money_spin.maximum(), money)))
         description_edit.setText(_decode_savegame_player_name(description))
         _set_rep_group_value(rep_group)
-        voice_edit.setText(voice)
         _set_item_combo_value(com_body_cb, com_body)
         _set_item_combo_value(com_head_cb, com_head)
         _set_item_combo_value(com_lh_cb, com_lefthand)
@@ -2093,6 +3205,7 @@ def open_savegame_editor(self):
                 except Exception:
                     story_mission_num = 0
                 break
+        _set_savegame_loaded_state()
         _set_story_lock_ui(1 <= int(story_mission_num) <= 12, story_mission_num)
         _set_editor_title(path)
         info_lbl.setText("")
@@ -2184,6 +3297,7 @@ def open_savegame_editor(self):
         if not files:
             savegame_cb.setCurrentIndex(-1)
             _set_story_lock_ui(False, 0)
+            _set_no_savegame_state()
             return
         target = None
         if select_path is not None:
@@ -2198,30 +3312,54 @@ def open_savegame_editor(self):
                 selected = True
         if not selected:
             savegame_cb.setCurrentIndex(-1)
+            _set_no_savegame_state()
         if auto_load and savegame_cb.currentIndex() >= 0:
             _load_selected()
 
     def _load_selected() -> None:
         chosen = str(savegame_cb.currentData() or "").strip()
         if not chosen:
+            _set_no_savegame_state()
             return
         ok, msg = _parse_with_loading(Path(chosen))
         if not ok:
+            _set_no_savegame_state()
             QMessageBox.warning(dlg, tr("savegame_editor.title"), msg)
 
-    def _apply_save_dir() -> None:
-        path = _save_dir()
+    def _apply_save_dir() -> bool:
+        raw = save_dir_edit.text().strip()
+        path = self._canonical_savegame_dir_from_input(raw)
+        save_dir_edit.setText(str(path))
+        if not path.exists() or not path.is_dir():
+            QMessageBox.warning(
+                dlg,
+                tr("savegame_editor.title"),
+                tr("savegame_editor.path_dir_invalid").format(path=str(path)),
+            )
+            return False
         self._cfg.set("settings.savegame_path", str(path))
         self.statusBar().showMessage(tr("savegame_editor.path_saved").format(path=str(path)))
         _refresh_savegame_list(auto_load=False)
+        return True
 
-    def _apply_game_path() -> None:
+    def _apply_game_path() -> bool:
         nonlocal game_path, faction_labels, templates, nickname_labels, numeric_id_map
-        nonlocal item_name_map, ship_nicks, equip_nicks, ship_hardpoints_by_nick
+        nonlocal item_name_map, ship_nicks, equip_nicks, trent_nicks, trent_body_nicks
+        nonlocal trent_head_nicks, trent_lh_nicks, trent_rh_nicks, ship_hardpoints_by_nick
         nonlocal ship_hp_types_by_hardpoint_by_nick
         nonlocal equip_type_by_nick, equip_hp_types_by_nick, hash_to_nick
         nonlocal jump_data, system_label_by_nick, system_to_bases
-        game_path = str(game_path_edit.text() or "").strip()
+        raw_gp = str(game_path_edit.text() or "").strip()
+        gp_path = self._canonical_game_dir_from_input(raw_gp)
+        game_path = str(gp_path).strip()
+        game_path_edit.setText(game_path)
+        if not game_path or self._find_freelancer_exe(gp_path) is None:
+            QMessageBox.warning(
+                dlg,
+                tr("savegame_editor.title"),
+                tr("mod_manager.launch.no_exe").format(path=game_path or raw_gp),
+            )
+            return False
         self._cfg.set("settings.savegame_game_path", game_path)
         faction_labels = self._savegame_editor_load_faction_labels(game_path)
         templates = self._savegame_editor_collect_rep_templates(game_path)
@@ -2250,6 +3388,11 @@ def open_savegame_editor(self):
         item_name_map = dict(item_data_new.get("item_name_map", {}) or {})
         ship_nicks = list(item_data_new.get("ship_nicks", []) or [])
         equip_nicks = list(item_data_new.get("equip_nicks", []) or [])
+        trent_nicks = list(item_data_new.get("trent_nicks", []) or [])
+        trent_body_nicks = list(item_data_new.get("trent_body_nicks", []) or [])
+        trent_head_nicks = list(item_data_new.get("trent_head_nicks", []) or [])
+        trent_lh_nicks = list(item_data_new.get("trent_lh_nicks", []) or [])
+        trent_rh_nicks = list(item_data_new.get("trent_rh_nicks", []) or [])
         ship_hardpoints_by_nick = {
             str(k): list(v) for k, v in dict(item_data_new.get("ship_hardpoints_by_nick", {}) or {}).items()
         }
@@ -2297,10 +3440,20 @@ def open_savegame_editor(self):
         _setup_item_combo(ship_archetype_cb, ship_nicks)
         ship_archetype_cb.blockSignals(False)
         trent_current = [_combo_item_nick(cb) for cb in trent_item_cbs]
-        for idx, cb in enumerate(trent_item_cbs):
+        trent_sources: list[tuple[QComboBox, list[str]]] = [
+            (com_body_cb, trent_body_nicks or trent_nicks or equip_nicks),
+            (com_head_cb, trent_head_nicks or trent_nicks or equip_nicks),
+            (com_lh_cb, trent_lh_nicks or trent_nicks or equip_nicks),
+            (com_rh_cb, trent_rh_nicks or trent_nicks or equip_nicks),
+            (body_cb, trent_body_nicks or trent_nicks or equip_nicks),
+            (head_cb, trent_head_nicks or trent_nicks or equip_nicks),
+            (lh_cb, trent_lh_nicks or trent_nicks or equip_nicks),
+            (rh_cb, trent_rh_nicks or trent_nicks or equip_nicks),
+        ]
+        for idx, (cb, source) in enumerate(trent_sources):
             cb.blockSignals(True)
             cb.clear()
-            _setup_item_combo(cb, equip_nicks)
+            _setup_item_combo(cb, source)
             _set_item_combo_value(cb, trent_current[idx] if idx < len(trent_current) else "")
             cb.blockSignals(False)
         _refresh_equip_hardpoint_choices()
@@ -2310,6 +3463,7 @@ def open_savegame_editor(self):
             if not ok:
                 QMessageBox.warning(dlg, tr("savegame_editor.title"), msg)
         self.statusBar().showMessage(tr("savegame_editor.game_path_saved").format(path=game_path))
+        return True
 
     def _open_path_settings() -> None:
         pd = QDialog(dlg)
@@ -2359,8 +3513,10 @@ def open_savegame_editor(self):
         def _accept() -> None:
             save_dir_edit.setText(sg_edit.text().strip())
             game_path_edit.setText(gm_edit.text().strip())
-            _apply_save_dir()
-            _apply_game_path()
+            if not _apply_save_dir():
+                return
+            if not _apply_game_path():
+                return
             pd.accept()
 
         sg_browse.clicked.connect(_browse_save_path)
@@ -2450,7 +3606,7 @@ def open_savegame_editor(self):
             dlg,
             tr("savegame_editor.open"),
             start_dir,
-            "Freelancer Savegame (*.fl);;All files (*)",
+            tr("savegame_editor.file_filter"),
         )
         if not chosen:
             return
@@ -2560,11 +3716,7 @@ def open_savegame_editor(self):
                 QMessageBox.warning(
                     dlg,
                     tr("savegame_editor.title"),
-                    (
-                        "Active story mission detected (MissionNum = {mn}). "
-                        "Changing system/base is blocked to prevent savegame crashes.\n\n"
-                        "Restore the backup or keep original system/base for story saves."
-                    ).format(mn=story_mission_num),
+                    tr("savegame_editor.story_save_blocked").format(mn=story_mission_num),
                 )
                 return
 
@@ -2576,7 +3728,6 @@ def open_savegame_editor(self):
         player, _ = self._set_single_key_line_in_section(player, "rep_group", f"rep_group = {_current_rep_group_nick()}")
         player, _ = self._set_single_key_line_in_section(player, "system", f"system = {new_system}")
         player, _ = self._set_single_key_line_in_section(player, "base", f"base = {new_base}")
-        player, _ = self._set_single_key_line_in_section(player, "voice", f"voice = {str(voice_edit.text() or '').strip()}")
         player, _ = self._set_single_key_line_in_section(
             player, "com_body", f"com_body = {_item_token_or_numeric_for_save(_combo_item_nick(com_body_cb))}"
         )
@@ -2601,8 +3752,30 @@ def open_savegame_editor(self):
         player, _ = self._set_single_key_line_in_section(
             player, "righthand", f"righthand = {_item_token_or_numeric_for_save(_combo_item_nick(rh_cb))}"
         )
-        ship_token = _item_token_for_save(_combo_item_nick(ship_archetype_cb))
+        current_ship_nick = _combo_item_nick(ship_archetype_cb)
+        ship_token = _item_token_for_save(current_ship_nick)
         player, _ = self._set_single_key_line_in_section(player, "ship_archetype", f"ship_archetype = {ship_token}")
+
+        allowed_hps = {str(hp or "").strip().lower() for hp in _ship_hardpoints(current_ship_nick) if str(hp or "").strip()}
+        invalid_hp_rows: list[tuple[str, str]] = []
+        for item_nick, hardpoint, _extra in _equip_rows():
+            hp = str(hardpoint or "").strip()
+            if not hp:
+                continue
+            if allowed_hps and hp.lower() not in allowed_hps:
+                invalid_hp_rows.append((item_nick, hp))
+        if invalid_hp_rows:
+            hp_list = sorted({hp for _item, hp in invalid_hp_rows}, key=str.lower)
+            QMessageBox.warning(
+                dlg,
+                tr("savegame_editor.title"),
+                tr("savegame_editor.invalid_hardpoints").format(
+                    count=len(invalid_hp_rows),
+                    ship=_item_ui_label(current_ship_nick) or current_ship_nick or "?",
+                    hps=", ".join(hp_list[:20]),
+                ),
+            )
+            return
 
         house_lines: list[str] = []
         for faction, rep in _current_houses():
@@ -2680,10 +3853,7 @@ def open_savegame_editor(self):
             text = newline.join(out_lines)
             if not text.endswith(newline):
                 text += newline
-            try:
-                cur.write_text(text, encoding="cp1252")
-            except UnicodeEncodeError:
-                cur.write_text(text, encoding="utf-8")
+            self._write_text_preserve_format(cur, text)
         except Exception as exc:
             QMessageBox.critical(dlg, tr("msg.save_error"), tr("savegame_editor.save_failed").format(error=exc))
             return
@@ -2699,6 +3869,19 @@ def open_savegame_editor(self):
     file_menu.addSeparator()
     act_file_close = file_menu.addAction(tr("dlg.close"))
     act_settings_paths = settings_menu.addAction(tr("savegame_editor.path_settings"))
+    act_help_quick = help_menu.addAction(tr("savegame_editor.help.quick"))
+    act_help_updates = help_menu.addAction(tr("savegame_editor.help.updates"))
+    help_menu.addSeparator()
+    act_help_reset_config = help_menu.addAction(tr("savegame_editor.help.reset_config"))
+    settings_menu.addSeparator()
+    theme_group = QActionGroup(dlg)
+    theme_group.setExclusive(True)
+    theme_actions: dict[str, object] = {}
+    for t in THEME_ORDER:
+        a = theme_menu.addAction(t)
+        a.setCheckable(True)
+        theme_group.addAction(a)
+        theme_actions[t] = a
     lang_actions: dict[str, object] = {}
     for code in available_languages():
         c = str(code or "").strip()
@@ -2718,6 +3901,7 @@ def open_savegame_editor(self):
     equip_del_btn.clicked.connect(
         lambda: (equip_tbl.removeRow(equip_tbl.currentRow()), _refresh_hardpoint_hint()) if equip_tbl.currentRow() >= 0 else None
     )
+    equip_autofix_btn.clicked.connect(_autofix_invalid_hardpoints)
     cargo_add_btn.clicked.connect(lambda: _add_cargo_row("", 1))
     cargo_del_btn.clicked.connect(lambda: cargo_tbl.removeRow(cargo_tbl.currentRow()) if cargo_tbl.currentRow() >= 0 else None)
     savegame_cb.currentIndexChanged.connect(
@@ -2735,6 +3919,36 @@ def open_savegame_editor(self):
     act_file_save.triggered.connect(_save)
     act_file_close.triggered.connect(dlg.reject)
     act_settings_paths.triggered.connect(_open_path_settings)
+    act_help_quick.triggered.connect(
+        lambda: QMessageBox.information(dlg, tr("savegame_editor.help.quick"), tr("savegame_editor.help.quick_text"))
+    )
+    act_help_updates.triggered.connect(lambda: _check_for_updates_popup(dlg, verbose=True))
+    def _reset_program_config() -> None:
+        box = QMessageBox(dlg)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle(tr("savegame_editor.help.reset_config_title"))
+        box.setText(tr("savegame_editor.help.reset_config_confirm").format(path=str(CONFIG_PATH)))
+        yes_btn = box.addButton(_tr_or("dlg.yes", "Yes"), QMessageBox.AcceptRole)
+        box.addButton(_tr_or("dlg.no", "No"), QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is not yes_btn:
+            return
+        try:
+            if CONFIG_PATH.exists():
+                CONFIG_PATH.unlink()
+            try:
+                self._cfg._d = {}
+            except Exception:
+                pass
+            QMessageBox.information(dlg, tr("savegame_editor.title"), tr("savegame_editor.help.reset_config_done"))
+        except Exception as exc:
+            QMessageBox.warning(
+                dlg,
+                tr("savegame_editor.title"),
+                tr("savegame_editor.help.reset_config_failed").format(error=str(exc)),
+            )
+    act_help_reset_config.triggered.connect(_reset_program_config)
+    validate_btn.clicked.connect(_validate_savegame)
     def _switch_language(code: str) -> None:
         try:
             set_language(code)
@@ -2744,13 +3958,46 @@ def open_savegame_editor(self):
             pass
     for code, act in lang_actions.items():
         act.triggered.connect(lambda _checked=False, c=code: _switch_language(c))
+    def _apply_theme(theme_name: str) -> None:
+        nonlocal current_theme
+        tname = str(theme_name or "Standard").strip()
+        if tname not in THEME_ORDER_SET or tname not in THEME_STYLES:
+            tname = "Standard"
+        if tname == current_theme:
+            return
+        qss = THEME_STYLES.get(tname, "")
+        dlg.setUpdatesEnabled(False)
+        try:
+            dlg.setStyleSheet(qss)
+        finally:
+            dlg.setUpdatesEnabled(True)
+            dlg.update()
+        _apply_map_theme(tname)
+        _render_known_objects_map(set(state.get("locked_ids", set()) or set()))
+        _render_visited_map(set(state.get("visit_ids", set()) or set()))
+        self._cfg.set("settings.theme", tname)
+        current_theme = tname
+        for name, act in theme_actions.items():
+            try:
+                act.setChecked(name == tname)
+            except Exception:
+                pass
+    current_theme = str(self._cfg.get("settings.theme", "Standard") or "Standard").strip()
+    if current_theme not in THEME_ORDER_SET or current_theme not in THEME_STYLES:
+        current_theme = "Standard"
+    for name, act in theme_actions.items():
+        act.triggered.connect(lambda _checked=False, n=name: _apply_theme(n))
+    dlg.setStyleSheet(THEME_STYLES.get(current_theme, ""))
+    _apply_map_theme(current_theme)
+    for name, act in theme_actions.items():
+        try:
+            act.setChecked(name == current_theme)
+        except Exception:
+            pass
     locked_view.on_system_click = _unlock_system_connections
 
     _refresh_savegame_list(auto_load=False)
-    _render_known_objects_map(set())
-    _render_visited_map(set())
-    locked_view.reset_zoom()
-    visited_view.reset_zoom()
+    _set_no_savegame_state()
     _refresh_hardpoint_hint()
     app = QApplication.instance()
     if app is not None:
@@ -2778,6 +4025,7 @@ def run_standalone() -> int:
             app.setProperty("flatlas_savegame_splash", splash)
             app.processEvents()
     host = _SavegameEditorHost()
+    _check_for_updates_popup(host)
     if not _standalone_ensure_paths(host):
         splash = app.property("flatlas_savegame_splash")
         if isinstance(splash, QSplashScreen):
@@ -2792,10 +4040,18 @@ def run_standalone() -> int:
 
 def _standalone_ensure_paths(host: _SavegameEditorHost) -> bool:
     cfg = host._cfg
-    save_path = str(cfg.get("settings.savegame_path", "") or "").strip()
-    game_path = str(cfg.get("settings.savegame_game_path", "") or "").strip()
-    save_ok = bool(save_path) and Path(save_path).exists() and Path(save_path).is_dir()
-    game_ok = bool(game_path) and Path(game_path).exists() and Path(game_path).is_dir()
+    save_path_raw = str(cfg.get("settings.savegame_path", "") or "").strip()
+    game_path_raw = str(cfg.get("settings.savegame_game_path", "") or "").strip()
+    save_path_obj = host._canonical_savegame_dir_from_input(save_path_raw)
+    game_path_obj = host._canonical_game_dir_from_input(game_path_raw)
+    save_path = str(save_path_obj).strip()
+    game_path = str(game_path_obj).strip()
+    save_ok = bool(save_path) and save_path_obj.exists() and save_path_obj.is_dir()
+    game_ok = bool(game_path) and game_path_obj.exists() and game_path_obj.is_dir() and host._find_freelancer_exe(game_path_obj) is not None
+    if save_ok:
+        cfg.set("settings.savegame_path", save_path)
+    if game_ok:
+        cfg.set("settings.savegame_game_path", game_path)
     if save_ok and game_ok:
         return True
 
@@ -2804,7 +4060,7 @@ def _standalone_ensure_paths(host: _SavegameEditorHost) -> bool:
     dlg.resize(800, 220)
     lay = QVBoxLayout(dlg)
     info = QLabel(
-        "Please set your Freelancer installation path and savegame folder before using the standalone editor.",
+        tr("savegame_editor.standalone.paths_required"),
         dlg,
     )
     info.setWordWrap(True)
@@ -2816,7 +4072,7 @@ def _standalone_ensure_paths(host: _SavegameEditorHost) -> bool:
     sg_l = QHBoxLayout(sg_row)
     sg_l.setContentsMargins(0, 0, 0, 0)
     sg_l.setSpacing(6)
-    sg_default = save_path or str(host._default_savegame_editor_dir())
+    sg_default = save_path or str(host._canonical_savegame_dir_from_input(str(host._default_savegame_editor_dir())))
     sg_edit = QLineEdit(sg_default, dlg)
     sg_l.addWidget(sg_edit, 1)
     sg_browse = QPushButton(tr("welcome.browse"), dlg)
@@ -2827,7 +4083,7 @@ def _standalone_ensure_paths(host: _SavegameEditorHost) -> bool:
     gm_l = QHBoxLayout(gm_row)
     gm_l.setContentsMargins(0, 0, 0, 0)
     gm_l.setSpacing(6)
-    gm_default = game_path or str(host._default_savegame_editor_game_path() or "")
+    gm_default = game_path or str(host._canonical_game_dir_from_input(str(host._default_savegame_editor_game_path() or "")))
     gm_edit = QLineEdit(gm_default, dlg)
     gm_l.addWidget(gm_edit, 1)
     gm_browse = QPushButton(tr("welcome.browse"), dlg)
@@ -2856,13 +4112,17 @@ def _standalone_ensure_paths(host: _SavegameEditorHost) -> bool:
             gm_edit.setText(chosen)
 
     def _accept() -> None:
-        sg = sg_edit.text().strip()
-        gm = gm_edit.text().strip()
-        if not sg or not Path(sg).is_dir():
-            QMessageBox.warning(dlg, tr("savegame_editor.title"), tr("savegame_editor.path_dir"))
+        sg_obj = host._canonical_savegame_dir_from_input(sg_edit.text().strip())
+        gm_obj = host._canonical_game_dir_from_input(gm_edit.text().strip())
+        sg = str(sg_obj).strip()
+        gm = str(gm_obj).strip()
+        sg_edit.setText(sg)
+        gm_edit.setText(gm)
+        if not sg or not sg_obj.is_dir():
+            QMessageBox.warning(dlg, tr("savegame_editor.title"), tr("savegame_editor.path_dir_invalid").format(path=sg))
             return
-        if not gm or not Path(gm).is_dir():
-            QMessageBox.warning(dlg, tr("savegame_editor.title"), tr("savegame_editor.game_path"))
+        if not gm or not gm_obj.is_dir() or host._find_freelancer_exe(gm_obj) is None:
+            QMessageBox.warning(dlg, tr("savegame_editor.title"), tr("mod_manager.launch.no_exe").format(path=gm))
             return
         cfg.set("settings.savegame_path", sg)
         cfg.set("settings.savegame_game_path", gm)
