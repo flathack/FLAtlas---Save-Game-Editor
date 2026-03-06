@@ -359,6 +359,8 @@ def _fetch_latest_release() -> dict[str, str] | None:
         return None
     if not isinstance(data, list):
         return None
+    if not data:
+        return {}
     best: dict[str, str] | None = None
     for row in data:
         if not isinstance(row, dict):
@@ -382,6 +384,14 @@ def _fetch_latest_release() -> dict[str, str] | None:
 def _check_for_updates_popup(parent: QWidget | None = None, *, verbose: bool = False) -> None:
     latest = _fetch_latest_release()
     if not latest:
+        if isinstance(latest, dict) and not latest:
+            if verbose:
+                QMessageBox.information(
+                    parent,
+                    tr("savegame_editor.title"),
+                    tr("savegame_editor.update.no_releases"),
+                )
+            return
         if verbose:
             QMessageBox.information(
                 parent,

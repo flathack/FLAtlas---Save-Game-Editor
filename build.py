@@ -11,7 +11,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 ENTRYPOINT = PROJECT_ROOT / "start_savegame_editor.py"
-SPEC_FILE = PROJECT_ROOT / "savegame_editor.spec"
+ICON_FILE = PROJECT_ROOT / "fl_editor" / "images" / "icon.png"
 
 
 def _detect_version() -> str:
@@ -54,6 +54,7 @@ def main() -> int:
     if args.clean:
         _ensure_clean_dirs()
 
+    sep = ";" if sys.platform.startswith("win") else ":"
     pyinstaller_cmd = [
         sys.executable,
         "-m",
@@ -62,12 +63,23 @@ def main() -> int:
         "--clean",
         "--name",
         app_name,
+        "--hidden-import",
+        "pefile",
+        "--add-data",
+        f"{PROJECT_ROOT / 'fl_editor' / 'translations.json'}{sep}fl_editor",
+        "--add-data",
+        f"{PROJECT_ROOT / 'fl_editor' / 'images' / 'icon.png'}{sep}fl_editor/images",
+        "--add-data",
+        f"{PROJECT_ROOT / 'fl_editor' / 'images' / 'splash.png'}{sep}fl_editor/images",
+        "--windowed",
     ]
+    if ICON_FILE.exists():
+        pyinstaller_cmd.extend(["--icon", str(ICON_FILE)])
     if args.mode == "onefile":
         pyinstaller_cmd.append("--onefile")
     else:
         pyinstaller_cmd.append("--onedir")
-    pyinstaller_cmd.extend([str(SPEC_FILE)])
+    pyinstaller_cmd.extend([str(ENTRYPOINT)])
 
     print("Running:", " ".join(pyinstaller_cmd))
     proc = subprocess.run(pyinstaller_cmd, cwd=str(PROJECT_ROOT))
