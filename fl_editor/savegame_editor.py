@@ -2922,34 +2922,50 @@ def open_savegame_editor(self):
             _refresh_equip_row_filters(r)
         _refresh_hardpoint_hint()
 
-    def _autofix_invalid_hardpoints(*, show_result: bool = True) -> int:
-        ship_nick = _current_ship_nick()
+    def _collect_invalid_hardpoint_rows(
+        ship_nick: str,
+        rows: list[tuple[str, str, str]],
+    ) -> list[tuple[str, str]]:
         allowed = {str(hp or "").strip().lower() for hp in _ship_hardpoints(ship_nick) if str(hp or "").strip()}
         if not allowed:
-            if show_result:
-                QMessageBox.information(dlg, tr("savegame_editor.title"), tr("savegame_editor.autofix.no_ship_hp"))
-            return 0
-        rows_to_fix: list[tuple[int, str]] = []
+            return []
+        invalid_rows: list[tuple[str, str]] = []
         keep_hp_prefixes = ("hplight", "hprunninglight", "hpfx", "hpcontrail")
         keep_types = {"light", "attachedfx", "internalfx", "contrail", "engine"}
-        for r in range(equip_tbl.rowCount()):
-            item_cb = equip_tbl.cellWidget(r, 0)
-            hp_cb = equip_tbl.cellWidget(r, 1)
-            if not isinstance(hp_cb, QComboBox):
-                continue
-            hp = str(hp_cb.currentText() or "").strip()
+        for item_nick, hardpoint, _extra in rows:
+            hp = str(hardpoint or "").strip()
             if not hp:
                 continue
             hp_l = hp.lower()
             if hp_l.startswith(keep_hp_prefixes):
                 continue
-            item_nick = _combo_item_nick(item_cb) if isinstance(item_cb, QComboBox) else ""
-            item_type = _equip_type(item_nick)
-            if item_type in keep_types:
+            if _equip_type(item_nick) in keep_types:
                 continue
-            if hp_l in allowed:
+            if hp_l not in allowed:
+                invalid_rows.append((item_nick, hp))
+        return invalid_rows
+
+    def _autofix_invalid_hardpoints(*, show_result: bool = True) -> int:
+        ship_nick = _current_ship_nick()
+        rows = _equip_rows()
+        allowed = {str(hp or "").strip().lower() for hp in _ship_hardpoints(ship_nick) if str(hp or "").strip()}
+        if not allowed:
+            if show_result:
+                QMessageBox.information(dlg, tr("savegame_editor.title"), tr("savegame_editor.autofix.no_ship_hp"))
+            return 0
+        invalid_pairs = set(_collect_invalid_hardpoint_rows(ship_nick, rows))
+        rows_to_fix: list[tuple[int, str]] = []
+        for r in range(equip_tbl.rowCount()):
+            item_cb = equip_tbl.cellWidget(r, 0)
+            hp_cb = equip_tbl.cellWidget(r, 1)
+            if not isinstance(item_cb, QComboBox) or not isinstance(hp_cb, QComboBox):
                 continue
-            rows_to_fix.append((r, hp))
+            item_nick = _combo_item_nick(item_cb)
+            hp = str(hp_cb.currentText() or "").strip()
+            if not hp:
+                continue
+            if (item_nick, hp) in invalid_pairs:
+                rows_to_fix.append((r, hp))
         fixed_rows = len(rows_to_fix)
         if fixed_rows <= 0:
             if show_result:
@@ -3834,14 +3850,7 @@ def open_savegame_editor(self):
         ship_token = _item_token_for_save(current_ship_nick)
         player, _ = self._set_single_key_line_in_section(player, "ship_archetype", f"ship_archetype = {ship_token}")
 
-        allowed_hps = {str(hp or "").strip().lower() for hp in _ship_hardpoints(current_ship_nick) if str(hp or "").strip()}
-        invalid_hp_rows: list[tuple[str, str]] = []
-        for item_nick, hardpoint, _extra in _equip_rows():
-            hp = str(hardpoint or "").strip()
-            if not hp:
-                continue
-            if allowed_hps and hp.lower() not in allowed_hps:
-                invalid_hp_rows.append((item_nick, hp))
+        invalid_hp_rows = _collect_invalid_hardpoint_rows(current_ship_nick, _equip_rows())
         if invalid_hp_rows:
             hp_list = sorted({hp for _item, hp in invalid_hp_rows}, key=str.lower)
             QMessageBox.warning(
