@@ -6,10 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from fl_editor.savegame_editor import run_standalone
-
-APP_VERSION = "v0.1.0"
-
+from fl_editor.version import APP_VERSION
+ # test
 
 def _python_has_pefile(python_exe: str) -> bool:
     try:
@@ -26,12 +24,15 @@ def _python_has_pefile(python_exe: str) -> bool:
 
 def _maybe_reexec_with_pefile_python() -> None:
     # Re-exec once with a Python that has pefile so IDS/Ingame names resolve.
+    if getattr(sys, "frozen", False):
+        return
     if os.environ.get("FLATLAS_SKIP_REEXEC", "") == "1":
         return
     if _python_has_pefile(sys.executable):
         return
     project_root = Path(__file__).resolve().parent
     candidates = [
+        project_root / ".venv" / "Scripts" / "python.exe",
         project_root / ".venv" / "bin" / "python",
         Path("/home/steven/FLEditor/.venv/bin/python"),
     ]
@@ -51,4 +52,6 @@ if __name__ == "__main__":
         print(APP_VERSION)
         raise SystemExit(0)
     _maybe_reexec_with_pefile_python()
+    from fl_editor.savegame_editor import run_standalone
+
     raise SystemExit(run_standalone())

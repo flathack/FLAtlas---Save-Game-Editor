@@ -1,5 +1,5 @@
-"""
-Freelancer System Editor – Paketstruktur
-Autor: Steven Schödel
-"""
-__version__ = "4.1.0"
+﻿"""FLAtlas Savegame Editor package metadata."""
+
+from .version import APP_VERSION
+
+__version__ = APP_VERSION

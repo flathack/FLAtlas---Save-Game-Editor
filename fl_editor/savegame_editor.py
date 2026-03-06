@@ -1,4 +1,4 @@
-"""Savegame editor module for FL Atlas.
+﻿"""Savegame editor module for FL Atlas.
 
 This module can be used from MainWindow integration and can also be started standalone.
 """
@@ -10,11 +10,13 @@ import re
 import shutil
 import sys
 import json
+import threading
+import time
 import webbrowser
 from urllib import request as urlrequest, error as urlerror
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QPointF, QRectF
+from PySide6.QtCore import Qt, QPointF, QRectF, QTimer
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QIcon, QPixmap, QActionGroup
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -52,235 +54,69 @@ from .config import Config, CONFIG_PATH
 from .parser import FLParser, find_all_systems
 from .path_utils import ci_find, ci_resolve
 from .dll_resources import DllStringResolver
+from .version import APP_VERSION
 
-SAVEGAME_EDITOR_VERSION = "v0.1.0"
+SAVEGAME_EDITOR_VERSION = APP_VERSION
 DISCORD_INVITE_URL = "https://discord.gg/RENtMMcc"
 BUG_REPORT_URL = "https://github.com/flathack/FLAtlas/issues"
 GITHUB_RELEASES_API = "https://api.github.com/repos/flathack/FLAtlas---Save-Game-Editor/releases?per_page=30"
 
 THEME_ORDER = [
-    "Standard",
     "Light",
     "Dark",
-    "High Contrast",
-    "Linux KDE",
 ]
 THEME_ORDER_SET = {str(n) for n in THEME_ORDER}
 
 THEME_STYLES: dict[str, str] = {
-    "Standard": """
-QDialog { background-color: #12161f; color: #e8edf5; }
-QMenuBar, QMenu { background: #171c26; color: #e8edf5; }
-QMenuBar::item:selected, QMenu::item:selected { background: #2f6fed; color: #ffffff; border-radius: 6px; }
-QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #e8edf5; }
-QLabel:disabled, QAbstractButton:disabled, QGroupBox::title:disabled { color: #8893a6; }
-QGroupBox { border: 1px solid #2f3b51; border-radius: 10px; margin-top: 9px; padding-top: 8px; background: #151b26; }
-QPushButton { background: #1d2533; border: 1px solid #3b4d6a; border-radius: 8px; padding: 6px 12px; color: #eef3fb; }
-QPushButton:hover { background: #243048; border-color: #5f7fb8; }
-QPushButton:pressed { background: #1b2740; }
-QPushButton:disabled { color: #7f8aa0; border-color: #313c50; background: #1a202c; }
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #0f141d; color: #e8edf5; border: 1px solid #3b4d6a; border-radius: 8px; min-height: 24px; selection-background-color: #2f6fed; selection-color: #ffffff; }
-QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #8791a4; border-color: #2a3447; background: #141a24; }
-QTabWidget::pane { border: 1px solid #33425c; border-radius: 10px; top: -1px; background: #121923; }
-QTabBar::tab { background: #1a2230; border: 1px solid #33425c; border-radius: 8px; padding: 6px 12px; margin-right: 2px; color: #cfd9e8; }
-QTabBar::tab:selected { background: #243247; color: #ffffff; border-color: #5f7fb8; }
-QTableWidget { gridline-color: #2a364b; background: #0f141d; alternate-background-color: #141a25; }
-QHeaderView::section { background: #1b2332; border: 1px solid #2a364b; padding: 4px; }
-QScrollBar:vertical, QScrollBar:horizontal { background: #151c27; }
-""",
     "Light": """
-QDialog { background-color: #f5f7fb; color: #111827; }
-QMenuBar, QMenu { background: #f5f7fb; color: #111827; }
-QMenuBar::item:selected, QMenu::item:selected { background: #2563eb; color: #ffffff; border-radius: 6px; }
-QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #111827; }
-QLabel:disabled, QAbstractButton:disabled, QGroupBox::title:disabled { color: #7a8598; }
-QGroupBox { border: 1px solid #d5dbe6; border-radius: 10px; margin-top: 9px; padding-top: 8px; background: #ffffff; }
-QPushButton { background: #edf2ff; border: 1px solid #c3d1ee; border-radius: 8px; padding: 6px 12px; color: #111827; }
-QPushButton:hover { background: #e3ebff; border-color: #98afe0; }
-QPushButton:pressed { background: #dae5ff; }
-QPushButton:disabled { color: #8a96aa; border-color: #d3dcea; background: #f2f5fa; }
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #ffffff; color: #111827; border: 1px solid #c8d1e0; border-radius: 8px; min-height: 24px; selection-background-color: #2563eb; selection-color: #ffffff; }
-QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #8a96aa; border-color: #d8dfea; background: #f4f7fb; }
-QTabWidget::pane { border: 1px solid #d0d8e5; border-radius: 10px; top: -1px; background: #ffffff; }
-QTabBar::tab { background: #eef3ff; border: 1px solid #d0d8e5; border-radius: 8px; padding: 6px 12px; margin-right: 2px; color: #334155; }
-QTabBar::tab:selected { background: #ffffff; color: #111827; border-color: #9fb5e4; }
-QTableWidget { gridline-color: #e1e7f0; background: #ffffff; alternate-background-color: #f8faff; }
-QHeaderView::section { background: #f0f4fb; border: 1px solid #e1e7f0; padding: 4px; }
+QDialog { background-color: #f6f7f9; color: #111111; }
+QMenuBar, QMenu { background: #f6f7f9; color: #111111; }
+QMenuBar::item:selected, QMenu::item:selected { background: #d9e6ff; color: #111111; }
+QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #111111; }
+QGroupBox { border: 1px solid #cfd3d8; border-radius: 0px; margin-top: 8px; padding-top: 6px; background: #ffffff; }
+QPushButton { background: #ffffff; border: 1px solid #c0c6ce; border-radius: 0px; padding: 6px 12px; color: #111111; }
+QPushButton:hover { background: #f2f5f8; border-color: #9ca7b4; }
+QPushButton:pressed { background: #e8edf3; }
+QPushButton:disabled { color: #7d8793; border-color: #d2d7dd; background: #f3f5f7; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #ffffff; color: #111111; border: 1px solid #c0c6ce; border-radius: 0px; min-height: 24px; selection-background-color: #2f6fed; selection-color: #ffffff; }
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #7d8793; border-color: #d2d7dd; background: #f3f5f7; }
+QTabWidget::pane { border: 1px solid #cfd3d8; border-radius: 0px; top: -1px; background: #ffffff; }
+QTabBar::tab { background: #eceff3; border: 1px solid #cfd3d8; border-radius: 0px; padding: 6px 12px; margin-right: 2px; color: #111111; }
+QTabBar::tab:selected { background: #ffffff; border-color: #9ca7b4; }
+QTableWidget { gridline-color: #d9dde2; background: #ffffff; alternate-background-color: #f7f8fa; }
+QHeaderView::section { background: #eef1f5; border: 1px solid #d9dde2; padding: 4px; }
 """,
     "Dark": """
-QDialog { background-color: #0f131b; color: #e7edf8; }
-QMenuBar, QMenu { background: #141a24; color: #e7edf8; }
-QMenuBar::item:selected, QMenu::item:selected { background: #3b82f6; color: #ffffff; border-radius: 6px; }
-QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #e7edf8; }
-QLabel:disabled, QAbstractButton:disabled, QGroupBox::title:disabled { color: #8c97aa; }
-QGroupBox { border: 1px solid #2a3448; border-radius: 10px; margin-top: 9px; padding-top: 8px; background: #141a24; }
-QPushButton { background: #1a2434; border: 1px solid #354967; border-radius: 8px; padding: 6px 12px; color: #eef3fd; }
-QPushButton:hover { background: #223049; border-color: #6687c0; }
-QPushButton:pressed { background: #1f2a40; }
-QPushButton:disabled { color: #8994a8; border-color: #2d3a51; background: #1a222f; }
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #0c1119; color: #e7edf8; border: 1px solid #354967; border-radius: 8px; min-height: 24px; selection-background-color: #3b82f6; selection-color: #ffffff; }
-QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #8c97aa; border-color: #2b3850; background: #131a25; }
-QTabWidget::pane { border: 1px solid #2d3a51; border-radius: 10px; top: -1px; background: #111823; }
-QTabBar::tab { background: #192232; border: 1px solid #2d3a51; border-radius: 8px; padding: 6px 12px; margin-right: 2px; color: #c4cfdf; }
-QTabBar::tab:selected { background: #24344d; color: #ffffff; border-color: #6687c0; }
-QTableWidget { gridline-color: #263449; background: #0d121a; alternate-background-color: #121a26; }
-QHeaderView::section { background: #182233; border: 1px solid #263449; padding: 4px; }
-QScrollBar:vertical, QScrollBar:horizontal { background: #141a24; }
-""",
-    "High Contrast": """
-QDialog { background-color: #000000; color: #ffffff; }
-QMenuBar, QMenu { background: #000000; color: #ffffff; border: 1px solid #ffffff; }
-QMenuBar::item:selected, QMenu::item:selected { background: #ffff00; color: #000000; }
-QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #ffffff; }
-QLabel:disabled, QAbstractButton:disabled, QGroupBox::title:disabled { color: #bfbfbf; }
-QGroupBox { border: 2px solid #ffffff; border-radius: 0px; margin-top: 10px; padding-top: 8px; background: #000000; }
-QPushButton { background: #000000; border: 2px solid #ffffff; border-radius: 0px; padding: 6px 12px; color: #ffffff; }
-QPushButton:hover { border-color: #ffff00; color: #ffff00; }
-QPushButton:pressed { background: #ffff00; color: #000000; }
-QPushButton:disabled { color: #bfbfbf; border-color: #9f9f9f; background: #000000; }
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
-    background: #000000;
-    color: #ffffff;
-    border: 2px solid #ffffff;
-    border-radius: 0px;
-    min-height: 24px;
-    selection-background-color: #ffff00;
-    selection-color: #000000;
-}
-QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {
-    color: #bfbfbf;
-    border-color: #9f9f9f;
-    background: #000000;
-}
-QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QPushButton:focus, QTableWidget:focus {
-    border: 3px solid #00ffff;
-}
-QTabWidget::pane { border: 2px solid #ffffff; border-radius: 0px; top: -1px; background: #000000; }
-QTabBar::tab { background: #000000; border: 2px solid #ffffff; border-radius: 0px; padding: 6px 12px; margin-right: 2px; color: #ffffff; }
-QTabBar::tab:selected { background: #ffff00; color: #000000; border-color: #ffffff; }
-QTableWidget {
-    gridline-color: #ffffff;
-    background: #000000;
-    alternate-background-color: #0f0f0f;
-    color: #ffffff;
-    selection-background-color: #ffff00;
-    selection-color: #000000;
-}
-QHeaderView::section { background: #000000; border: 2px solid #ffffff; color: #ffffff; padding: 4px; }
-QScrollBar:vertical, QScrollBar:horizontal { background: #000000; border: 1px solid #ffffff; }
-QToolTip { background: #000000; color: #ffffff; border: 1px solid #ffffff; }
-""",
-    "Windows XP": """
-QDialog { background-color: #ece9d8; color: #1f1f1f; }
-QMenuBar, QMenu { background: #ece9d8; color: #1f1f1f; }
-QMenuBar::item:selected, QMenu::item:selected { background: #316ac5; color: #ffffff; }
-QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #1f1f1f; }
-QLabel:disabled, QAbstractButton:disabled, QGroupBox::title:disabled { color: #7b7b7b; }
-QGroupBox { border: 1px solid #7f9db9; margin-top: 8px; padding-top: 6px; background: #f5f2e5; }
-QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 3px; }
-QPushButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #f9f8f3, stop:1 #dcd9c8); border: 1px solid #7f9db9; padding: 4px 10px; }
-QPushButton:hover { border-color: #3c7fb1; }
-QPushButton:disabled { color: #808080; border-color: #9a9a9a; background: #e1dfd2; }
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #ffffff; color: #1f1f1f; border: 1px solid #7f9db9; min-height: 22px; selection-background-color: #316ac5; selection-color: #ffffff; }
-QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #7b7b7b; background: #f0f0f0; }
-QTabWidget::pane { border: 1px solid #7f9db9; top: -1px; }
-QTabBar::tab { background: #e3e9f7; border: 1px solid #7f9db9; padding: 5px 10px; margin-right: 1px; }
-QTabBar::tab:selected { background: #ffffff; }
-QTableWidget { gridline-color: #b5c5db; background: #ffffff; alternate-background-color: #f7f9ff; }
-QHeaderView::section { background: #dbe6f7; border: 1px solid #a8bcd9; padding: 4px; }
-""",
-    "Windows 7": """
-QDialog { background-color: #edf2fb; color: #1b1d1f; }
-QMenuBar, QMenu { background: #edf2fb; color: #1b1d1f; }
-QMenuBar::item:selected, QMenu::item:selected { background: #2f75d6; color: #ffffff; }
-QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #1b1d1f; }
-QLabel:disabled, QAbstractButton:disabled, QGroupBox::title:disabled { color: #6f7785; }
-QGroupBox { border: 1px solid #9bb7df; border-radius: 4px; margin-top: 8px; padding-top: 6px; background: #f6f9ff; }
-QPushButton { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #ffffff, stop:1 #d6e3f6); border: 1px solid #8ca9d1; border-radius: 3px; padding: 5px 11px; }
-QPushButton:hover { border-color: #4f7fbe; }
-QPushButton:disabled { color: #7f8898; border-color: #aeb8ca; background: #e9edf5; }
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #ffffff; color: #1b1d1f; border: 1px solid #8ca9d1; border-radius: 2px; min-height: 22px; selection-background-color: #2f75d6; selection-color: #ffffff; }
-QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #6f7785; background: #f1f4f9; border-color: #bec8da; }
-QTabWidget::pane { border: 1px solid #9bb7df; }
-QTabBar::tab { background: #dce8f9; border: 1px solid #9bb7df; padding: 5px 10px; }
-QTabBar::tab:selected { background: #ffffff; }
-QTableWidget { gridline-color: #c3d0e4; background: #ffffff; alternate-background-color: #f7faff; }
-QHeaderView::section { background: #e4eefc; border: 1px solid #bfd0ea; padding: 4px; }
-""",
-    "Windows 10": """
-QDialog { background-color: #f2f2f2; color: #111111; }
-QMenuBar, QMenu { background: #f2f2f2; color: #111111; }
-QMenuBar::item:selected, QMenu::item:selected { background: #0078d7; color: #ffffff; }
-QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #111111; }
-QLabel:disabled, QAbstractButton:disabled, QGroupBox::title:disabled { color: #6a6a6a; }
-QGroupBox { border: 1px solid #b8b8b8; margin-top: 8px; padding-top: 6px; background: #f9f9f9; }
-QPushButton { background: #f3f3f3; border: 1px solid #adadad; border-radius: 2px; padding: 5px 12px; }
-QPushButton:hover { border-color: #0078d7; }
-QPushButton:disabled { color: #8b8b8b; background: #ededed; border-color: #c9c9c9; }
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #ffffff; color: #111111; border: 1px solid #9c9c9c; min-height: 22px; selection-background-color: #0078d7; selection-color: #ffffff; }
-QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #7a7a7a; background: #f3f3f3; border-color: #c7c7c7; }
-QTabWidget::pane { border: 1px solid #b8b8b8; top: -1px; }
-QTabBar::tab { background: #e9e9e9; border: 1px solid #b8b8b8; padding: 5px 11px; }
-QTabBar::tab:selected { background: #ffffff; border-bottom-color: #ffffff; }
-QTableWidget { gridline-color: #d3d3d3; background: #ffffff; alternate-background-color: #fafafa; }
-QHeaderView::section { background: #f0f0f0; border: 1px solid #d3d3d3; padding: 4px; }
-""",
-    "Windows 11": """
-QDialog { background-color: #f6f8fc; color: #101828; }
-QMenuBar, QMenu { background: #f6f8fc; color: #101828; }
-QMenuBar::item:selected, QMenu::item:selected { background: #2563eb; color: #ffffff; border-radius: 6px; }
-QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #101828; }
-QLabel:disabled, QAbstractButton:disabled, QGroupBox::title:disabled { color: #76839a; }
-QGroupBox { border: 1px solid #c8d2e1; border-radius: 10px; margin-top: 10px; padding-top: 8px; }
-QGroupBox::title { left: 10px; padding: 0 4px; }
-QPushButton { background: #e8efff; border: 1px solid #b7c5e2; border-radius: 8px; padding: 6px 13px; }
-QPushButton:hover { background: #dce7ff; border-color: #7ea2df; }
-QPushButton:disabled { color: #8794ab; background: #eef2f8; border-color: #d4deec; }
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #ffffff; color: #101828; border: 1px solid #c3cfdf; border-radius: 8px; min-height: 24px; selection-background-color: #2563eb; selection-color: #ffffff; }
-QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #7e8ca2; background: #f2f5fa; border-color: #d8e0ec; }
-QTabWidget::pane { border: 1px solid #c3cfdf; border-radius: 10px; top: -1px; }
-QTabBar::tab { background: #edf2ff; border: 1px solid #c3cfdf; border-radius: 8px; padding: 6px 12px; margin-right: 2px; }
-QTabBar::tab:selected { background: #ffffff; }
-QTableWidget { gridline-color: #d8e0ec; background: #ffffff; alternate-background-color: #f7f9fd; }
-QHeaderView::section { background: #eef3fb; border: 1px solid #d8e0ec; padding: 4px; }
-""",
-    "Linux KDE": """
-QDialog { background-color: #1f2530; color: #e6edf7; }
-QMenuBar, QMenu { background: #232a36; color: #e6edf7; }
-QMenuBar::item:selected, QMenu::item:selected { background: #3d7ea6; color: #ffffff; }
-QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #e6edf7; }
-QLabel:disabled, QAbstractButton:disabled, QGroupBox::title:disabled { color: #94a3ba; }
-QGroupBox { border: 1px solid #4f6179; border-radius: 5px; margin-top: 8px; padding-top: 6px; }
-QPushButton { background: #2a3444; border: 1px solid #5f7290; border-radius: 4px; padding: 5px 10px; color: #f0f4fb; }
-QPushButton:hover { background: #314157; border-color: #79a3d1; }
-QPushButton:disabled { color: #95a2b8; border-color: #4d607d; background: #2a3240; }
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #121821; color: #e6edf7; border: 1px solid #5f7290; min-height: 22px; selection-background-color: #3d7ea6; selection-color: #ffffff; }
-QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #97a5bc; background: #1b2230; border-color: #485a74; }
-QTabWidget::pane { border: 1px solid #5f7290; }
-QTabBar::tab { background: #2b3648; border: 1px solid #5f7290; padding: 5px 10px; }
-QTabBar::tab:selected { background: #3a4b63; }
-QTableWidget { gridline-color: #3d4d64; background: #121821; alternate-background-color: #18202c; }
-QHeaderView::section { background: #293549; border: 1px solid #43556f; padding: 4px; }
-""",
-    "Gnome": """
-QDialog { background-color: #f6f5f4; color: #241f31; }
-QMenuBar, QMenu { background: #f6f5f4; color: #241f31; }
-QMenuBar::item:selected, QMenu::item:selected { background: #3584e4; color: #ffffff; border-radius: 6px; }
-QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #241f31; }
-QLabel:disabled, QAbstractButton:disabled, QGroupBox::title:disabled { color: #77767b; }
-QGroupBox { border: 1px solid #c6c4c0; border-radius: 12px; margin-top: 9px; padding-top: 8px; }
-QPushButton { background: #ffffff; border: 1px solid #c6c4c0; border-radius: 10px; padding: 6px 13px; }
-QPushButton:hover { border-color: #3584e4; }
-QPushButton:disabled { color: #8a8891; border-color: #d8d6d3; background: #f1f1f1; }
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #ffffff; color: #241f31; border: 1px solid #c6c4c0; border-radius: 10px; min-height: 24px; selection-background-color: #3584e4; selection-color: #ffffff; }
-QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #807d89; background: #f2f2f1; border-color: #d8d6d3; }
-QTabWidget::pane { border: 1px solid #c6c4c0; border-radius: 12px; }
-QTabBar::tab { background: #eceae8; border: 1px solid #c6c4c0; border-radius: 9px; padding: 6px 12px; margin-right: 2px; }
-QTabBar::tab:selected { background: #ffffff; border-color: #3584e4; }
-QTableWidget { gridline-color: #dad8d4; background: #ffffff; alternate-background-color: #f7f6f5; }
-QHeaderView::section { background: #efeeec; border: 1px solid #dad8d4; padding: 4px; }
+QDialog { background-color: #171a1f; color: #e6e8eb; }
+QMenuBar, QMenu { background: #171a1f; color: #e6e8eb; }
+QMenuBar::item:selected, QMenu::item:selected { background: #2a3442; color: #ffffff; }
+QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #e6e8eb; }
+QGroupBox { border: 1px solid #3a404a; border-radius: 0px; margin-top: 8px; padding-top: 6px; background: #1d2128; }
+QPushButton { background: #242a33; border: 1px solid #4a5564; border-radius: 0px; padding: 6px 12px; color: #eef1f5; }
+QPushButton:hover { background: #2b3240; border-color: #637389; }
+QPushButton:pressed { background: #232a37; }
+QPushButton:disabled { color: #8b95a3; border-color: #434d5b; background: #212733; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #12161c; color: #e6e8eb; border: 1px solid #4a5564; border-radius: 0px; min-height: 24px; selection-background-color: #2f6fed; selection-color: #ffffff; }
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #8b95a3; border-color: #3c4654; background: #1a1f28; }
+QTabWidget::pane { border: 1px solid #3a404a; border-radius: 0px; top: -1px; background: #171b22; }
+QTabBar::tab { background: #232a33; border: 1px solid #3a404a; border-radius: 0px; padding: 6px 12px; margin-right: 2px; color: #d2d8df; }
+QTabBar::tab:selected { background: #2c3440; color: #ffffff; border-color: #637389; }
+QTableWidget { gridline-color: #323a45; background: #12161c; alternate-background-color: #171c24; }
+QHeaderView::section { background: #202731; border: 1px solid #323a45; padding: 4px; }
 """,
 }
+# Keep typography stable across style states (hover/pressed/selected),
+# because some platform styles auto-adjust fonts on state changes.
+THEME_FONT_LOCK_QSS = """
+QPushButton, QPushButton:hover, QPushButton:pressed, QPushButton:disabled {
+    font-size: 12px;
+    font-weight: 400;
+}
+QMenuBar::item, QMenuBar::item:selected, QMenu::item, QMenu::item:selected {
+    font-size: 12px;
+    font-weight: 400;
+}
+"""
 
 
 def _tr_or(key: str, fallback: str) -> str:
@@ -402,10 +238,24 @@ def _check_for_updates_popup(parent: QWidget | None = None, *, verbose: bool = F
     latest_tag = str(latest.get("tag") or "").strip()
     if not latest_tag or not _is_version_newer(latest_tag, SAVEGAME_EDITOR_VERSION):
         if verbose:
+            msg_tpl = tr("savegame_editor.update.current")
+            try:
+                msg = msg_tpl.format(
+                    version=SAVEGAME_EDITOR_VERSION,
+                    latest=latest_tag or SAVEGAME_EDITOR_VERSION,
+                )
+            except Exception:
+                msg = f"Program is up to date ({SAVEGAME_EDITOR_VERSION})."
+            if "{latest}" not in msg_tpl:
+                msg = (
+                    f"{msg}\n"
+                    f"Installed: {SAVEGAME_EDITOR_VERSION}\n"
+                    f"Online: {latest_tag or SAVEGAME_EDITOR_VERSION}"
+                )
             QMessageBox.information(
                 parent,
                 tr("savegame_editor.title"),
-                tr("savegame_editor.update.current").format(version=SAVEGAME_EDITOR_VERSION),
+                msg,
             )
         return
     title = tr("savegame_editor.update.title")
@@ -431,6 +281,68 @@ def _check_for_updates_popup(parent: QWidget | None = None, *, verbose: bool = F
                 webbrowser.open(url)
             except Exception:
                 pass
+
+
+def _check_for_updates_popup_async(parent: QWidget | None = None) -> None:
+    """Run release lookup in a background thread and show popup later if needed."""
+    state: dict[str, object] = {"done": False, "latest": None}
+    deadline = time.monotonic() + 20.0
+
+    def _worker() -> None:
+        try:
+            state["latest"] = _fetch_latest_release()
+        except Exception:
+            state["latest"] = None
+        finally:
+            state["done"] = True
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+    def _poll() -> None:
+        if time.monotonic() >= deadline:
+            return
+        if not bool(state.get("done", False)):
+            QTimer.singleShot(200, _poll)
+            return
+        latest = state.get("latest")
+        if not isinstance(latest, dict) or not latest:
+            return
+        latest_tag = str(latest.get("tag") or "").strip()
+        if not latest_tag or not _is_version_newer(latest_tag, SAVEGAME_EDITOR_VERSION):
+            return
+        title = tr("savegame_editor.update.title")
+        text = tr("savegame_editor.update.text").format(
+            release_type=str(latest.get("type", "release") or "release"),
+            current=SAVEGAME_EDITOR_VERSION,
+            latest=latest_tag,
+            name=str(latest.get("name", latest_tag) or latest_tag),
+        )
+        box = QMessageBox(parent)
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle(title)
+        box.setText(text)
+        open_btn = box.addButton(tr("savegame_editor.update.open"), QMessageBox.AcceptRole)
+        box.addButton(tr("savegame_editor.update.later"), QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is open_btn:
+            url = str(latest.get("url") or "").strip()
+            if url:
+                try:
+                    webbrowser.open(url)
+                except Exception:
+                    pass
+
+    QTimer.singleShot(300, _poll)
+
+
+def _close_startup_splash(app: QApplication | None = None) -> None:
+    inst = app or QApplication.instance()
+    if inst is None:
+        return
+    splash_obj = inst.property("flatlas_savegame_splash")
+    if isinstance(splash_obj, QSplashScreen):
+        splash_obj.close()
+        inst.setProperty("flatlas_savegame_splash", None)
 
 
 class _SavegameKnownMapView(QGraphicsView):
@@ -538,6 +450,9 @@ class _SavegameEditorHost(QMainWindow):
         return self._primary_game_path()
 
     def _default_savegame_editor_dir(self) -> Path:
+        probed = self._probe_savegame_editor_dir()
+        if isinstance(probed, Path):
+            return probed
         cfg_dir = str(self._cfg.get("settings.savegame_path", "") or "").strip()
         if cfg_dir:
             p = Path(cfg_dir)
@@ -555,10 +470,79 @@ class _SavegameEditorHost(QMainWindow):
         return Path.home()
 
     def _default_savegame_editor_game_path(self) -> str:
+        probed = self._probe_savegame_editor_game_path()
+        if isinstance(probed, Path):
+            return str(probed)
         cfg_path = str(self._cfg.get("settings.savegame_game_path", "") or "").strip()
         if cfg_path and Path(cfg_path).exists():
             return cfg_path
         return ""
+
+    def _probe_savegame_editor_dir(self) -> Path | None:
+        cfg_dir = str(self._cfg.get("settings.savegame_path", "") or "").strip()
+        candidates: list[Path] = []
+        if cfg_dir:
+            candidates.append(self._canonical_savegame_dir_from_input(cfg_dir))
+        userprofile = str(os.environ.get("USERPROFILE", "") or "").strip()
+        if userprofile:
+            candidates.append(Path(userprofile) / "Documents" / "My Games" / "Freelancer" / "Accts" / "SinglePlayer")
+            candidates.append(Path(userprofile) / "OneDrive" / "Documents" / "My Games" / "Freelancer" / "Accts" / "SinglePlayer")
+        candidates.append(Path.home() / "Documents" / "My Games" / "Freelancer" / "Accts" / "SinglePlayer")
+        candidates = self._dedupe_paths(candidates)
+        for cand in candidates:
+            try:
+                if cand.exists() and cand.is_dir():
+                    return cand
+            except Exception:
+                continue
+        return None
+
+    def _probe_savegame_editor_game_path(self) -> Path | None:
+        candidates: list[Path] = []
+        cfg_path = str(self._cfg.get("settings.savegame_game_path", "") or "").strip()
+        if cfg_path:
+            candidates.append(self._canonical_game_dir_from_input(cfg_path))
+        if os.name == "nt":
+            pf = str(os.environ.get("ProgramFiles", "") or "").strip()
+            pfx86 = str(os.environ.get("ProgramFiles(x86)", "") or "").strip()
+            if pfx86:
+                candidates.append(Path(pfx86) / "Microsoft Games" / "Freelancer")
+            if pf:
+                candidates.append(Path(pf) / "Microsoft Games" / "Freelancer")
+            system_drive = str(os.environ.get("SystemDrive", "C:") or "C:").strip()
+            candidates.append(Path(system_drive + "\\") / "Games" / "Freelancer")
+
+            try:
+                import winreg  # type: ignore
+
+                reg_keys = [
+                    (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Freelancer 1.0"),
+                    (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Freelancer 1.0"),
+                    (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Freelancer 1.0"),
+                ]
+                for hive, subkey in reg_keys:
+                    try:
+                        with winreg.OpenKey(hive, subkey) as k:
+                            icon_val = str(winreg.QueryValueEx(k, "DisplayIcon")[0] or "").strip().strip('"')
+                            uninst_val = str(winreg.QueryValueEx(k, "UninstallString")[0] or "").strip().strip('"')
+                    except Exception:
+                        continue
+                    for raw in (icon_val, uninst_val):
+                        if not raw:
+                            continue
+                        p = Path(raw.split(" /", 1)[0].strip().strip('"'))
+                        candidates.append(self._canonical_game_dir_from_input(str(p)))
+            except Exception:
+                pass
+
+        candidates = self._dedupe_paths(candidates)
+        for cand in candidates:
+            try:
+                if cand.exists() and cand.is_dir() and self._find_freelancer_exe(cand) is not None:
+                    return cand
+            except Exception:
+                continue
+        return None
 
     @staticmethod
     def _path_from_text(raw_path: str) -> Path:
@@ -663,8 +647,22 @@ class _SavegameEditorHost(QMainWindow):
             if cand.exists() and cand.is_dir() and self._find_freelancer_exe(cand) is not None:
                 return cand
 
+        # Avoid expensive broad scans on generic roots (e.g. C:\).
+        try:
+            anchor = Path(base.anchor) if str(base.anchor).strip() else None
+            if anchor is not None and base == anchor:
+                return base
+        except Exception:
+            pass
+
         # Limited downward search for EXE/Freelancer.exe when user entered a partial path.
         if base.exists() and base.is_dir():
+            base_l = str(base).lower()
+            allow_downward_scan = any(
+                token in base_l for token in ("freelancer", "microsoft games", "my games")
+            )
+            if not allow_downward_scan:
+                return base
             max_depth = 5
             max_dirs = 2000
             scanned = 0
@@ -715,10 +713,10 @@ class _SavegameEditorHost(QMainWindow):
             for enc in ("utf-8", "cp1252", "latin1"):
                 try:
                     txt = dec.decode(enc)
-                    return txt.replace("\x85", "\n").replace("…", "\n")
+                    return txt.replace("\x85", "\n").replace("â€¦", "\n")
                 except Exception:
                     continue
-            return dec.decode("latin1", errors="ignore").replace("\x85", "\n").replace("…", "\n")
+            return dec.decode("latin1", errors="ignore").replace("\x85", "\n").replace("â€¦", "\n")
         for enc in ("utf-8", "cp1252", "latin1"):
             try:
                 return raw.decode(enc)
@@ -1573,7 +1571,12 @@ def open_savegame_editor(self):
     for sys_nick, rows in system_to_bases.items():
         rows.sort(key=lambda r: str(r.get("display", "")).lower())
 
-    dlg = QDialog(self)
+    # In standalone mode, use a top-level dialog so Windows creates a taskbar entry.
+    parent_widget = None if isinstance(self, _SavegameEditorHost) else self
+    dlg = QDialog(parent_widget)
+    if parent_widget is None:
+        dlg.setWindowFlag(Qt.Window, True)
+        dlg.setWindowFlag(Qt.WindowMinMaxButtonsHint, True)
     try:
         dlg.setWindowIcon(self.windowIcon())
     except Exception:
@@ -1728,7 +1731,7 @@ def open_savegame_editor(self):
     visited_map_l.addWidget(visit_unlock_all_btn, 0, Qt.AlignRight)
 
     def _map_colors_for_theme(theme_name: str) -> dict[str, QColor]:
-        t = str(theme_name or "Standard").strip()
+        t = str(theme_name or "Light").strip()
         if t == "Light":
             return {
                 "bg": QColor("#f6f8fc"),
@@ -1743,21 +1746,6 @@ def open_savegame_editor(self):
                 "text_locked": QColor("#7f1d1d"),
                 "text_visited": QColor("#1f2937"),
                 "text_empty": QColor("#5b6778"),
-            }
-        if t == "High Contrast":
-            return {
-                "bg": QColor("#000000"),
-                "line_inactive": QColor("#8f8f8f"),
-                "line_locked": QColor("#ff3333"),
-                "line_visited": QColor("#00a6ff"),
-                "node_inactive": QColor("#9f9f9f"),
-                "node_locked": QColor("#ff3333"),
-                "node_visited": QColor("#00ff66"),
-                "node_outline": QColor("#ffffff"),
-                "text_inactive": QColor("#d7d7d7"),
-                "text_locked": QColor("#ff9999"),
-                "text_visited": QColor("#ffffff"),
-                "text_empty": QColor("#ffffff"),
             }
         return {
             "bg": QColor("#0f141d"),
@@ -1774,7 +1762,7 @@ def open_savegame_editor(self):
             "text_empty": QColor("#a7a7a7"),
         }
 
-    map_colors: dict[str, QColor] = _map_colors_for_theme(self._cfg.get("settings.theme", "Standard"))
+    map_colors: dict[str, QColor] = _map_colors_for_theme(self._cfg.get("settings.theme", "Light"))
 
     def _apply_map_theme(theme_name: str) -> None:
         nonlocal map_colors
@@ -1782,7 +1770,7 @@ def open_savegame_editor(self):
         locked_scene.setBackgroundBrush(QBrush(map_colors["bg"]))
         visited_scene.setBackgroundBrush(QBrush(map_colors["bg"]))
 
-    _apply_map_theme(self._cfg.get("settings.theme", "Standard"))
+    _apply_map_theme(self._cfg.get("settings.theme", "Light"))
 
     tpl_row = QHBoxLayout()
     tpl_row.addWidget(QLabel(tr("savegame_editor.template")))
@@ -1942,6 +1930,7 @@ def open_savegame_editor(self):
         "visit_ids": set(),
         "visit_line_by_id": {},
         "story_locked": False,
+        "bulk_loading": False,
     }
     map_state: dict[str, object] = {"locked_ids": set(), "visit_ids": set()}
 
@@ -2057,11 +2046,19 @@ def open_savegame_editor(self):
     def _set_loading(active: bool) -> None:
         load_progress.setVisible(active)
         if active:
-            load_progress.setRange(0, 0)
-            load_progress.setFormat(tr("savegame_editor.loading"))
+            load_progress.setRange(0, 100)
+            load_progress.setValue(0)
+            load_progress.setFormat(f"{tr('savegame_editor.loading')} (%p%)")
         else:
             load_progress.setRange(0, 1)
             load_progress.setValue(0)
+        QApplication.processEvents()
+
+    def _set_loading_progress(value: int) -> None:
+        if not load_progress.isVisible():
+            return
+        load_progress.setRange(0, 100)
+        load_progress.setValue(max(0, min(100, int(value))))
         QApplication.processEvents()
 
     def _save_dir() -> Path:
@@ -2093,7 +2090,8 @@ def open_savegame_editor(self):
         if not isinstance(cur, Path):
             QMessageBox.information(dlg, tr("savegame_editor.title"), tr("savegame_editor.no_file"))
             return
-        fixed_hardpoints = _autofix_invalid_hardpoints(show_result=False)
+        # Validation must be read-only. Hardpoint auto-fix stays manual via button.
+        fixed_hardpoints = 0
         try:
             raw = self._read_text_best_effort(cur)
         except Exception as exc:
@@ -2499,6 +2497,8 @@ def open_savegame_editor(self):
         return -1
 
     def _refresh_hardpoint_hint() -> None:
+        if bool(state.get("bulk_loading", False)):
+            return
         ship_nick = _current_ship_nick()
         hp_all = _ship_hardpoints(ship_nick)
         if not hp_all:
@@ -2849,7 +2849,7 @@ def open_savegame_editor(self):
             _refresh_equip_row_filters(row)
             _refresh_hardpoint_hint()
 
-    def _add_equip_row(item_nick: str = "", hardpoint: str = "", extra: str = "") -> None:
+    def _add_equip_row(item_nick: str = "", hardpoint: str = "", extra: str = "", *, defer_refresh: bool = False) -> None:
         row = equip_tbl.rowCount()
         equip_tbl.insertRow(row)
         item_cb = QComboBox(dlg)
@@ -2866,11 +2866,13 @@ def open_savegame_editor(self):
             _set_hardpoint_combo_value(hp_cb, hardpoint)
         hp_cb.currentIndexChanged.connect(lambda _idx, w=hp_cb: _refresh_equip_row_filters_for_hp_widget(w))
         hp_cb.currentTextChanged.connect(lambda _txt, w=hp_cb: _refresh_equip_row_filters_for_hp_widget(w))
-        _refresh_equip_row_filters(row)
         if item_nick:
             _set_item_combo_value(item_cb, item_nick)
+        if not defer_refresh:
             _refresh_equip_row_filters(row)
-        _refresh_hardpoint_hint()
+            if item_nick:
+                _refresh_equip_row_filters(row)
+            _refresh_hardpoint_hint()
 
     def _add_cargo_row(item_nick: str = "", amount: int = 1, extra: str = ", , 0") -> None:
         row = cargo_tbl.rowCount()
@@ -2920,31 +2922,74 @@ def open_savegame_editor(self):
             _refresh_equip_row_filters(r)
         _refresh_hardpoint_hint()
 
+    def _collect_invalid_hardpoint_rows(
+        ship_nick: str,
+        rows: list[tuple[str, str, str]],
+    ) -> list[tuple[str, str]]:
+        allowed = {str(hp or "").strip().lower() for hp in _ship_hardpoints(ship_nick) if str(hp or "").strip()}
+        if not allowed:
+            return []
+        invalid_rows: list[tuple[str, str]] = []
+        keep_hp_prefixes = ("hplight", "hprunninglight", "hpfx", "hpcontrail")
+        keep_types = {"light", "attachedfx", "internalfx", "contrail", "engine"}
+        for item_nick, hardpoint, _extra in rows:
+            hp = str(hardpoint or "").strip()
+            if not hp:
+                continue
+            hp_l = hp.lower()
+            if hp_l.startswith(keep_hp_prefixes):
+                continue
+            if _equip_type(item_nick) in keep_types:
+                continue
+            if hp_l not in allowed:
+                invalid_rows.append((item_nick, hp))
+        return invalid_rows
+
     def _autofix_invalid_hardpoints(*, show_result: bool = True) -> int:
         ship_nick = _current_ship_nick()
+        rows = _equip_rows()
         allowed = {str(hp or "").strip().lower() for hp in _ship_hardpoints(ship_nick) if str(hp or "").strip()}
         if not allowed:
             if show_result:
                 QMessageBox.information(dlg, tr("savegame_editor.title"), tr("savegame_editor.autofix.no_ship_hp"))
             return 0
-        fixed_rows = 0
-        fixed_hps: list[str] = []
+        invalid_pairs = set(_collect_invalid_hardpoint_rows(ship_nick, rows))
+        rows_to_fix: list[tuple[int, str]] = []
         for r in range(equip_tbl.rowCount()):
+            item_cb = equip_tbl.cellWidget(r, 0)
             hp_cb = equip_tbl.cellWidget(r, 1)
-            if not isinstance(hp_cb, QComboBox):
+            if not isinstance(item_cb, QComboBox) or not isinstance(hp_cb, QComboBox):
                 continue
+            item_nick = _combo_item_nick(item_cb)
             hp = str(hp_cb.currentText() or "").strip()
             if not hp:
                 continue
-            if hp.lower() in allowed:
-                continue
-            _set_hardpoint_combo_value(hp_cb, "")
-            fixed_rows += 1
-            fixed_hps.append(hp)
+            if (item_nick, hp) in invalid_pairs:
+                rows_to_fix.append((r, hp))
+        fixed_rows = len(rows_to_fix)
         if fixed_rows <= 0:
             if show_result:
                 QMessageBox.information(dlg, tr("savegame_editor.title"), tr("savegame_editor.autofix.none_needed"))
             return 0
+        cur = state.get("path")
+        if isinstance(cur, Path) and cur.exists() and cur.is_file():
+            backup = cur.with_name(f"{cur.name}.FLAtlasBAK")
+            try:
+                shutil.copy2(str(cur), str(backup))
+            except Exception as exc:
+                QMessageBox.warning(
+                    dlg,
+                    tr("savegame_editor.title"),
+                    tr("savegame_editor.save_failed").format(error=exc),
+                )
+                return 0
+        fixed_hps: list[str] = []
+        for r, hp in rows_to_fix:
+            hp_cb = equip_tbl.cellWidget(r, 1)
+            if not isinstance(hp_cb, QComboBox):
+                continue
+            _set_hardpoint_combo_value(hp_cb, "")
+            fixed_hps.append(hp)
         _refresh_equip_hardpoint_choices()
         self.statusBar().showMessage(tr("savegame_editor.pending_changes"))
         if show_result:
@@ -3062,16 +3107,20 @@ def open_savegame_editor(self):
         return out
 
     def _parse_savegame(path: Path) -> tuple[bool, str]:
+        _set_loading_progress(2)
         try:
             raw = self._read_text_best_effort(path)
         except Exception as exc:
             return False, str(exc)
+        _set_loading_progress(10)
         lines = raw.splitlines()
+        _set_loading_progress(14)
         bounds = self._find_ini_section_bounds(lines, "Player", None)
         if bounds is None:
             return False, tr("savegame_editor.player_missing")
         s, e = bounds
         player_lines = lines[s:e]
+        _set_loading_progress(18)
 
         rank = 0
         money = 0
@@ -3091,7 +3140,8 @@ def open_savegame_editor(self):
         equip_rows: list[tuple[str, str, str]] = []
         cargo_rows: list[tuple[str, int, str]] = []
         houses: list[tuple[str, float]] = []
-        for raw_line in player_lines[1:]:
+        total_player_lines = max(1, len(player_lines) - 1)
+        for idx, raw_line in enumerate(player_lines[1:], start=1):
             line = str(raw_line).strip()
             if not line or line.startswith(";") or "=" not in line:
                 continue
@@ -3168,59 +3218,90 @@ def open_savegame_editor(self):
                 faction = parts[1]
                 if faction:
                     houses.append((faction, rep))
+            if idx == 1 or (idx % 250 == 0) or idx == total_player_lines:
+                # Parsing phase: roughly 18% -> 58%.
+                phase = 18 + int((idx / total_player_lines) * 40)
+                _set_loading_progress(phase)
 
-        rank_spin.setValue(max(rank_spin.minimum(), min(rank_spin.maximum(), rank)))
-        money_spin.setValue(max(money_spin.minimum(), min(money_spin.maximum(), money)))
-        description_edit.setText(_decode_savegame_player_name(description))
-        _set_rep_group_value(rep_group)
-        _set_item_combo_value(com_body_cb, com_body)
-        _set_item_combo_value(com_head_cb, com_head)
-        _set_item_combo_value(com_lh_cb, com_lefthand)
-        _set_item_combo_value(com_rh_cb, com_righthand)
-        _set_item_combo_value(body_cb, body)
-        _set_item_combo_value(head_cb, head)
-        _set_item_combo_value(lh_cb, lefthand)
-        _set_item_combo_value(rh_cb, righthand)
-        _set_item_combo_value(ship_archetype_cb, ship_archetype)
-        equip_tbl.setRowCount(0)
-        for item_nick, hp, extra in equip_rows:
-            _add_equip_row(item_nick, hp, extra)
-        cargo_tbl.setRowCount(0)
-        for item_nick, amount, extra in cargo_rows:
-            _add_cargo_row(item_nick, amount, extra)
-        _ensure_system_item(system)
-        _rebuild_base_combo(system, preferred_base=base)
-        houses.sort(key=lambda x: x[0].lower())
-        _set_houses(houses)
-        locked_ids = _locked_gate_ids_from_lines(player_lines)
-        visit_ids = _visit_ids_from_lines(player_lines)
-        state["locked_ids"] = set(locked_ids)
-        state["visit_ids"] = set(visit_ids)
-        state["visit_line_by_id"] = _visit_line_map_from_lines(player_lines)
-        _set_pending_locked_ids(set(locked_ids))
-        _set_pending_visit_ids(set(visit_ids))
-        story_mission_num = 0
-        story_bounds = self._find_ini_section_bounds(lines, "StoryInfo", None)
-        if story_bounds is not None:
-            ss, se = story_bounds
-            for ln in lines[ss + 1:se]:
-                core = str(ln or "").split(";", 1)[0].strip()
-                if not core or "=" not in core:
-                    continue
-                k, v = core.split("=", 1)
-                if str(k or "").strip().lower() != "missionnum":
-                    continue
-                try:
-                    story_mission_num = int(float(str(v or "").strip()))
-                except Exception:
-                    story_mission_num = 0
-                break
-        _set_savegame_loaded_state()
-        _set_story_lock_ui(1 <= int(story_mission_num) <= 12, story_mission_num)
-        _set_editor_title(path)
-        info_lbl.setText("")
-        state["path"] = path
-        return True, ""
+        state["bulk_loading"] = True
+        dlg.setUpdatesEnabled(False)
+        equip_tbl.setUpdatesEnabled(False)
+        cargo_tbl.setUpdatesEnabled(False)
+        houses_tbl.setUpdatesEnabled(False)
+        try:
+            _set_loading_progress(62)
+            rank_spin.setValue(max(rank_spin.minimum(), min(rank_spin.maximum(), rank)))
+            money_spin.setValue(max(money_spin.minimum(), min(money_spin.maximum(), money)))
+            description_edit.setText(_decode_savegame_player_name(description))
+            _set_rep_group_value(rep_group)
+            _set_item_combo_value(com_body_cb, com_body)
+            _set_item_combo_value(com_head_cb, com_head)
+            _set_item_combo_value(com_lh_cb, com_lefthand)
+            _set_item_combo_value(com_rh_cb, com_righthand)
+            _set_item_combo_value(body_cb, body)
+            _set_item_combo_value(head_cb, head)
+            _set_item_combo_value(lh_cb, lefthand)
+            _set_item_combo_value(rh_cb, righthand)
+            _set_item_combo_value(ship_archetype_cb, ship_archetype)
+            equip_tbl.setRowCount(0)
+            total_equip = max(1, len(equip_rows))
+            for i, (item_nick, hp, extra) in enumerate(equip_rows, start=1):
+                _add_equip_row(item_nick, hp, extra, defer_refresh=True)
+                if i == 1 or (i % 100 == 0) or i == total_equip:
+                    # Equip fill phase: 62% -> 70%
+                    _set_loading_progress(62 + int((i / total_equip) * 8))
+            cargo_tbl.setRowCount(0)
+            total_cargo = max(1, len(cargo_rows))
+            for i, (item_nick, amount, extra) in enumerate(cargo_rows, start=1):
+                _add_cargo_row(item_nick, amount, extra)
+                if i == 1 or (i % 100 == 0) or i == total_cargo:
+                    # Cargo fill phase: 70% -> 76%
+                    _set_loading_progress(70 + int((i / total_cargo) * 6))
+            _set_loading_progress(76)
+            _refresh_equip_hardpoint_choices()
+            _ensure_system_item(system)
+            _rebuild_base_combo(system, preferred_base=base)
+            houses.sort(key=lambda x: x[0].lower())
+            _set_houses(houses)
+            _set_loading_progress(82)
+            locked_ids = _locked_gate_ids_from_lines(player_lines)
+            visit_ids = _visit_ids_from_lines(player_lines)
+            state["locked_ids"] = set(locked_ids)
+            state["visit_ids"] = set(visit_ids)
+            state["visit_line_by_id"] = _visit_line_map_from_lines(player_lines)
+            _set_pending_locked_ids(set(locked_ids))
+            _set_pending_visit_ids(set(visit_ids))
+            _set_loading_progress(92)
+            story_mission_num = 0
+            story_bounds = self._find_ini_section_bounds(lines, "StoryInfo", None)
+            if story_bounds is not None:
+                ss, se = story_bounds
+                for ln in lines[ss + 1:se]:
+                    core = str(ln or "").split(";", 1)[0].strip()
+                    if not core or "=" not in core:
+                        continue
+                    k, v = core.split("=", 1)
+                    if str(k or "").strip().lower() != "missionnum":
+                        continue
+                    try:
+                        story_mission_num = int(float(str(v or "").strip()))
+                    except Exception:
+                        story_mission_num = 0
+                    break
+            _set_savegame_loaded_state()
+            _set_story_lock_ui(1 <= int(story_mission_num) <= 12, story_mission_num)
+            _set_editor_title(path)
+            info_lbl.setText("")
+            state["path"] = path
+            _set_loading_progress(100)
+            return True, ""
+        finally:
+            state["bulk_loading"] = False
+            houses_tbl.setUpdatesEnabled(True)
+            cargo_tbl.setUpdatesEnabled(True)
+            equip_tbl.setUpdatesEnabled(True)
+            dlg.setUpdatesEnabled(True)
+            _refresh_hardpoint_hint()
 
     def _parse_with_loading(path: Path) -> tuple[bool, str]:
         _set_loading(True)
@@ -3308,6 +3389,9 @@ def open_savegame_editor(self):
             savegame_cb.setCurrentIndex(-1)
             _set_story_lock_ui(False, 0)
             _set_no_savegame_state()
+            info_lbl.setText(
+                tr("savegame_editor.no_saves_path_info").format(path=str(save_dir))
+            )
             return
         target = None
         if select_path is not None:
@@ -3766,14 +3850,7 @@ def open_savegame_editor(self):
         ship_token = _item_token_for_save(current_ship_nick)
         player, _ = self._set_single_key_line_in_section(player, "ship_archetype", f"ship_archetype = {ship_token}")
 
-        allowed_hps = {str(hp or "").strip().lower() for hp in _ship_hardpoints(current_ship_nick) if str(hp or "").strip()}
-        invalid_hp_rows: list[tuple[str, str]] = []
-        for item_nick, hardpoint, _extra in _equip_rows():
-            hp = str(hardpoint or "").strip()
-            if not hp:
-                continue
-            if allowed_hps and hp.lower() not in allowed_hps:
-                invalid_hp_rows.append((item_nick, hp))
+        invalid_hp_rows = _collect_invalid_hardpoint_rows(current_ship_nick, _equip_rows())
         if invalid_hp_rows:
             hp_list = sorted({hp for _item, hp in invalid_hp_rows}, key=str.lower)
             QMessageBox.warning(
@@ -3879,6 +3956,7 @@ def open_savegame_editor(self):
     file_menu.addSeparator()
     act_file_close = file_menu.addAction(tr("dlg.close"))
     act_settings_paths = settings_menu.addAction(tr("savegame_editor.path_settings"))
+    act_help_about = help_menu.addAction(tr("savegame_editor.help.about"))
     act_help_quick = help_menu.addAction(tr("savegame_editor.help.quick"))
     act_help_updates = help_menu.addAction(tr("savegame_editor.help.updates"))
     help_menu.addSeparator()
@@ -3932,6 +4010,17 @@ def open_savegame_editor(self):
     act_help_quick.triggered.connect(
         lambda: QMessageBox.information(dlg, tr("savegame_editor.help.quick"), tr("savegame_editor.help.quick_text"))
     )
+    def _show_about_dialog() -> None:
+        QMessageBox.information(
+            dlg,
+            tr("savegame_editor.help.about"),
+            tr("savegame_editor.help.about_text").format(
+                version=SAVEGAME_EDITOR_VERSION,
+                discord=DISCORD_INVITE_URL,
+                bugs=BUG_REPORT_URL,
+            ),
+        )
+    act_help_about.triggered.connect(_show_about_dialog)
     act_help_updates.triggered.connect(lambda: _check_for_updates_popup(dlg, verbose=True))
     def _reset_program_config() -> None:
         box = QMessageBox(dlg)
@@ -3970,12 +4059,12 @@ def open_savegame_editor(self):
         act.triggered.connect(lambda _checked=False, c=code: _switch_language(c))
     def _apply_theme(theme_name: str) -> None:
         nonlocal current_theme
-        tname = str(theme_name or "Standard").strip()
+        tname = str(theme_name or "Light").strip()
         if tname not in THEME_ORDER_SET or tname not in THEME_STYLES:
-            tname = "Standard"
+            tname = "Light"
         if tname == current_theme:
             return
-        qss = THEME_STYLES.get(tname, "")
+        qss = THEME_STYLES.get(tname, "") + "\n" + THEME_FONT_LOCK_QSS
         dlg.setUpdatesEnabled(False)
         try:
             dlg.setStyleSheet(qss)
@@ -3992,12 +4081,12 @@ def open_savegame_editor(self):
                 act.setChecked(name == tname)
             except Exception:
                 pass
-    current_theme = str(self._cfg.get("settings.theme", "Standard") or "Standard").strip()
+    current_theme = str(self._cfg.get("settings.theme", "Light") or "Light").strip()
     if current_theme not in THEME_ORDER_SET or current_theme not in THEME_STYLES:
-        current_theme = "Standard"
+        current_theme = "Light"
     for name, act in theme_actions.items():
         act.triggered.connect(lambda _checked=False, n=name: _apply_theme(n))
-    dlg.setStyleSheet(THEME_STYLES.get(current_theme, ""))
+    dlg.setStyleSheet(THEME_STYLES.get(current_theme, "") + "\n" + THEME_FONT_LOCK_QSS)
     _apply_map_theme(current_theme)
     for name, act in theme_actions.items():
         try:
@@ -4009,12 +4098,7 @@ def open_savegame_editor(self):
     _refresh_savegame_list(auto_load=False)
     _set_no_savegame_state()
     _refresh_hardpoint_hint()
-    app = QApplication.instance()
-    if app is not None:
-        splash = app.property("flatlas_savegame_splash")
-        if isinstance(splash, QSplashScreen):
-            splash.close()
-            app.setProperty("flatlas_savegame_splash", None)
+    QTimer.singleShot(0, _close_startup_splash)
     rc = dlg.exec()
     if rc == 2:
         open_savegame_editor(self)
@@ -4022,6 +4106,7 @@ def open_savegame_editor(self):
 
 def run_standalone() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
+
     icon_path = Path(__file__).with_name("images") / "icon.png"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
@@ -4029,23 +4114,29 @@ def run_standalone() -> int:
     if splash_path.exists():
         pix = QPixmap(str(splash_path))
         if not pix.isNull():
+            # Keep startup feedback, but avoid oversized splash on HiDPI screens.
+            pix = pix.scaled(
+                max(1, pix.width() // 2),
+                max(1, pix.height() // 2),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
             splash = QSplashScreen(pix)
             splash.setWindowFlag(Qt.WindowStaysOnTopHint, True)
             splash.show()
             app.setProperty("flatlas_savegame_splash", splash)
             app.processEvents()
-    host = _SavegameEditorHost()
-    _check_for_updates_popup(host)
-    if not _standalone_ensure_paths(host):
-        splash = app.property("flatlas_savegame_splash")
-        if isinstance(splash, QSplashScreen):
-            splash.close()
-            app.setProperty("flatlas_savegame_splash", None)
-        return 1
-    host.hide()
-    open_savegame_editor(host)
-    host.close()
-    return 0
+    try:
+        host = _SavegameEditorHost()
+        if not _standalone_ensure_paths(host):
+            return 1
+        _check_for_updates_popup_async(None)
+        host.hide()
+        open_savegame_editor(host)
+        host.close()
+        return 0
+    finally:
+        _close_startup_splash(app)
 
 
 def _standalone_ensure_paths(host: _SavegameEditorHost) -> bool:
@@ -4058,6 +4149,25 @@ def _standalone_ensure_paths(host: _SavegameEditorHost) -> bool:
     game_path = str(game_path_obj).strip()
     save_ok = bool(save_path) and save_path_obj.exists() and save_path_obj.is_dir()
     game_ok = bool(game_path) and game_path_obj.exists() and game_path_obj.is_dir() and host._find_freelancer_exe(game_path_obj) is not None
+
+    detected_save_obj: Path | None = None
+    detected_game_obj: Path | None = None
+    if not save_ok:
+        detected_save_obj = host._probe_savegame_editor_dir()
+    if not game_ok:
+        detected_game_obj = host._probe_savegame_editor_game_path()
+    if isinstance(detected_save_obj, Path):
+        save_path_obj = detected_save_obj
+        save_path = str(save_path_obj).strip()
+        save_ok = save_path_obj.exists() and save_path_obj.is_dir()
+    if isinstance(detected_game_obj, Path):
+        game_path_obj = detected_game_obj
+        game_path = str(game_path_obj).strip()
+        game_ok = (
+            game_path_obj.exists()
+            and game_path_obj.is_dir()
+            and host._find_freelancer_exe(game_path_obj) is not None
+        )
     if save_ok:
         cfg.set("settings.savegame_path", save_path)
     if game_ok:
@@ -4065,6 +4175,7 @@ def _standalone_ensure_paths(host: _SavegameEditorHost) -> bool:
     if save_ok and game_ok:
         return True
 
+    _close_startup_splash()
     dlg = QDialog(host)
     dlg.setWindowTitle(tr("savegame_editor.path_settings"))
     dlg.resize(800, 220)
@@ -4082,7 +4193,11 @@ def _standalone_ensure_paths(host: _SavegameEditorHost) -> bool:
     sg_l = QHBoxLayout(sg_row)
     sg_l.setContentsMargins(0, 0, 0, 0)
     sg_l.setSpacing(6)
-    sg_default = save_path or str(host._canonical_savegame_dir_from_input(str(host._default_savegame_editor_dir())))
+    sg_default = save_path or (
+        str(detected_save_obj)
+        if isinstance(detected_save_obj, Path)
+        else str(host._canonical_savegame_dir_from_input(str(host._default_savegame_editor_dir())))
+    )
     sg_edit = QLineEdit(sg_default, dlg)
     sg_l.addWidget(sg_edit, 1)
     sg_browse = QPushButton(tr("welcome.browse"), dlg)
@@ -4093,7 +4208,11 @@ def _standalone_ensure_paths(host: _SavegameEditorHost) -> bool:
     gm_l = QHBoxLayout(gm_row)
     gm_l.setContentsMargins(0, 0, 0, 0)
     gm_l.setSpacing(6)
-    gm_default = game_path or str(host._canonical_game_dir_from_input(str(host._default_savegame_editor_game_path() or "")))
+    gm_default = game_path or (
+        str(detected_game_obj)
+        if isinstance(detected_game_obj, Path)
+        else str(host._canonical_game_dir_from_input(str(host._default_savegame_editor_game_path() or "")))
+    )
     gm_edit = QLineEdit(gm_default, dlg)
     gm_l.addWidget(gm_edit, 1)
     gm_browse = QPushButton(tr("welcome.browse"), dlg)
@@ -4147,3 +4266,6 @@ def _standalone_ensure_paths(host: _SavegameEditorHost) -> bool:
 
 if __name__ == "__main__":
     raise SystemExit(run_standalone())
+
+
+

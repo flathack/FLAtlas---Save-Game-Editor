@@ -1,6 +1,7 @@
-{
-  "python.defaultInterpreterPath": "/home/steven/FLEditor/.venv/bin/python",
+﻿{
+  "python.defaultInterpreterPath": ".\\.venv\\Scripts\\python.exe",
   "python.analysis.extraPaths": [
-    "/home/steven/FLAtlas-Savegame-Editor"
-  ]
+    "."
+  ],
+  "python.terminal.activateEnvironment": true
 }
