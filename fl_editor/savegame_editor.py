@@ -10,6 +10,8 @@ import re
 import shutil
 import sys
 import json
+import difflib
+import itertools
 import threading
 import time
 import webbrowser
@@ -37,6 +39,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QListWidget,
+    QListWidgetItem,
     QSlider,
     QSizePolicy,
     QSpinBox,
@@ -44,6 +48,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
     QSplashScreen,
@@ -4466,6 +4471,90 @@ def open_savegame_editor(self):
             return _decode_savegame_player_name(str(player_values.get("name", "")))
         return ""
 
+    def _backup_history_paths_for(path: Path) -> list[Path]:
+        parent = path.parent
+        prefix = f"{path.name}.FLAtlasBAK"
+        out: list[Path] = []
+        try:
+            for cand in parent.iterdir():
+                if not cand.is_file():
+                    continue
+                if not cand.name.startswith(prefix):
+                    continue
+                out.append(cand)
+        except Exception:
+            return []
+        return sorted(out, key=lambda p: p.stat().st_mtime if p.exists() else 0.0, reverse=True)
+
+    def _create_backup_snapshot(path: Path, *, include_latest_alias: bool = True) -> Path | None:
+        if not path.exists() or not path.is_file():
+            return None
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        latest_backup = path.with_name(f"{path.name}.FLAtlasBAK")
+        history_backup = path.with_name(f"{path.name}.FLAtlasBAK.{stamp}")
+        idx = 1
+        while history_backup.exists():
+            idx += 1
+            history_backup = path.with_name(f"{path.name}.FLAtlasBAK.{stamp}_{idx}")
+        if include_latest_alias:
+            shutil.copy2(str(path), str(latest_backup))
+        shutil.copy2(str(path), str(history_backup))
+        return history_backup
+
+    def _read_savegame_text_for_diff(path: Path) -> str:
+        try:
+            raw = self._read_text_best_effort(path)
+        except Exception:
+            return ""
+        return str(raw or "").replace("\r\n", "\n").replace("\r", "\n")
+
+    def _backup_diff_text(current_path: Path, backup_path: Path) -> str:
+        current_text = _read_savegame_text_for_diff(current_path)
+        backup_text = _read_savegame_text_for_diff(backup_path)
+        if current_text == backup_text:
+            return _tr_or("savegame_editor.backup_diff_same", "No textual differences to the current savegame.")
+        current_lines = current_text.splitlines()
+        backup_lines = backup_text.splitlines()
+        if len(current_lines) + len(backup_lines) > 12000:
+            preview: list[str] = []
+            diff_count = 0
+            max_preview = 160
+            for idx, (old_line, new_line) in enumerate(itertools.zip_longest(backup_lines, current_lines, fillvalue=""), start=1):
+                if old_line == new_line:
+                    continue
+                diff_count += 1
+                if len(preview) >= max_preview:
+                    continue
+                preview.append(f"Line {idx}")
+                if old_line:
+                    preview.append(f"- {old_line}")
+                if new_line:
+                    preview.append(f"+ {new_line}")
+                preview.append("")
+            header = _tr_or(
+                "savegame_editor.backup_diff_large",
+                "Large savegame detected. Showing a fast preview with {count} changed line(s).",
+            ).format(count=diff_count)
+            if preview:
+                return header + "\n\n" + "\n".join(preview).strip()
+            return header
+        diff_lines = list(
+            itertools.islice(
+                difflib.unified_diff(
+                    backup_lines,
+                    current_lines,
+                    fromfile=backup_path.name,
+                    tofile=current_path.name,
+                    lineterm="",
+                    n=2,
+                ),
+                1200,
+            )
+        )
+        if not diff_lines:
+            return _tr_or("savegame_editor.backup_diff_same", "No textual differences to the current savegame.")
+        return "\n".join(diff_lines)
+
     def _include_savegame_in_picker(path: Path) -> bool:
         hidden_names = {"restart.fl", "autosave.fl", "autostart.fl"}
         return path.name.lower() not in hidden_names
@@ -5175,9 +5264,9 @@ def open_savegame_editor(self):
         player = _replace_key_block(player, {"house"}, house_lines)
         out_lines = lines[:s] + player + lines[e:]
 
-        backup = target_path.with_name(f"{target_path.name}.FLAtlasBAK")
+        backup = None
         try:
-            shutil.copy2(str(cur), str(backup))
+            backup = _create_backup_snapshot(target_path)
             text = newline.join(out_lines)
             if not text.endswith(newline):
                 text += newline
@@ -5189,8 +5278,9 @@ def open_savegame_editor(self):
         state["path"] = target_path
         _set_editor_title(target_path)
         _remember_recent_save(target_path)
-        self.statusBar().showMessage(tr("savegame_editor.saved").format(path=str(target_path), backup=str(backup)))
-        info_lbl.setText(tr("savegame_editor.saved").format(path=str(target_path), backup=str(backup)))
+        backup_msg = str(backup) if isinstance(backup, Path) else _tr_or("savegame_editor.backup_none_created", "No backup created")
+        self.statusBar().showMessage(tr("savegame_editor.saved").format(path=str(target_path), backup=backup_msg))
+        info_lbl.setText(tr("savegame_editor.saved").format(path=str(target_path), backup=backup_msg))
         _refresh_savegame_list(select_path=target_path, auto_load=False)
         return True
 
@@ -5217,30 +5307,121 @@ def open_savegame_editor(self):
         if not isinstance(cur, Path):
             QMessageBox.information(dlg, tr("savegame_editor.title"), tr("savegame_editor.no_file"))
             return
-        backup = cur.with_name(f"{cur.name}.FLAtlasBAK")
-        if not backup.exists():
+        backups = _backup_history_paths_for(cur)
+        if not backups:
             QMessageBox.information(
                 dlg,
                 tr("savegame_editor.title"),
                 _tr_or("savegame_editor.backup_missing", "No FLAtlas backup found for:\n{path}").format(path=str(cur)),
             )
             return
+        restore_dlg = QDialog(dlg)
+        restore_dlg.setModal(True)
+        restore_dlg.resize(940, 560)
+        restore_dlg.setWindowTitle(_tr_or("savegame_editor.restore_backup", "Restore Backup"))
         try:
-            shutil.copy2(str(backup), str(cur))
-        except Exception as exc:
-            QMessageBox.warning(
-                dlg,
-                tr("savegame_editor.title"),
-                _tr_or("savegame_editor.backup_restore_failed", "Could not restore backup:\n{error}").format(error=str(exc)),
-            )
-            return
-        ok, msg = _parse_with_loading(cur)
-        if not ok:
-            QMessageBox.warning(dlg, tr("savegame_editor.title"), msg)
-            return
-        self.statusBar().showMessage(
-            _tr_or("savegame_editor.backup_restored", "Backup restored: {path}").format(path=str(backup))
+            restore_dlg.setWindowIcon(dlg.windowIcon())
+        except Exception:
+            pass
+        root = QVBoxLayout(restore_dlg)
+        root.setContentsMargins(14, 14, 14, 14)
+        root.setSpacing(10)
+        intro = QLabel(
+            _tr_or(
+                "savegame_editor.backup_restore_intro",
+                "Select a backup on the left. The right side shows the textual differences compared to the current savegame.",
+            ),
+            restore_dlg,
         )
+        intro.setWordWrap(True)
+        root.addWidget(intro)
+        content = QHBoxLayout()
+        content.setSpacing(10)
+        backup_list = QListWidget(restore_dlg)
+        backup_list.setMinimumWidth(280)
+        content.addWidget(backup_list, 0)
+        diff_view = QTextEdit(restore_dlg)
+        diff_view.setReadOnly(True)
+        diff_view.setLineWrapMode(QTextEdit.NoWrap)
+        content.addWidget(diff_view, 1)
+        root.addLayout(content, 1)
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        restore_btn = QPushButton(_tr_or("savegame_editor.restore_backup", "Restore Backup"), restore_dlg)
+        close_btn = QPushButton(_tr_or("dlg.close", "Close"), restore_dlg)
+        button_row.addWidget(restore_btn)
+        button_row.addWidget(close_btn)
+        root.addLayout(button_row)
+
+        for backup in backups:
+            try:
+                ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(backup.stat().st_mtime))
+            except Exception:
+                ts = backup.name
+            label = f"{backup.name}\n{ts}"
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, str(backup))
+            backup_list.addItem(item)
+
+        def _selected_backup_path() -> Path | None:
+            item = backup_list.currentItem()
+            if item is None:
+                return None
+            raw = str(item.data(Qt.UserRole) or "").strip()
+            return Path(raw) if raw else None
+
+        def _update_backup_diff() -> None:
+            selected = _selected_backup_path()
+            if not isinstance(selected, Path) or not selected.exists():
+                diff_view.setPlainText("")
+                restore_btn.setEnabled(False)
+                return
+            diff_view.setPlainText(_backup_diff_text(cur, selected))
+            restore_btn.setEnabled(True)
+
+        def _restore_selected_backup() -> None:
+            selected = _selected_backup_path()
+            if not isinstance(selected, Path):
+                return
+            try:
+                selected_bytes = selected.read_bytes()
+                current_bytes = cur.read_bytes() if cur.exists() else b""
+                if selected_bytes == current_bytes:
+                    QMessageBox.information(
+                        restore_dlg,
+                        tr("savegame_editor.title"),
+                        _tr_or(
+                            "savegame_editor.backup_already_current",
+                            "The selected backup already matches the current savegame.",
+                        ),
+                    )
+                    return
+                _create_backup_snapshot(cur, include_latest_alias=False)
+                cur.write_bytes(selected_bytes)
+            except Exception as exc:
+                QMessageBox.warning(
+                    restore_dlg,
+                    tr("savegame_editor.title"),
+                    _tr_or("savegame_editor.backup_restore_failed", "Could not restore backup:\n{error}").format(error=str(exc)),
+                )
+                return
+            ok, msg = _parse_with_loading(cur)
+            if not ok:
+                QMessageBox.warning(restore_dlg, tr("savegame_editor.title"), msg)
+                return
+            self.statusBar().showMessage(
+                _tr_or("savegame_editor.backup_restored", "Backup restored: {path}").format(path=str(selected))
+            )
+            restore_dlg.accept()
+
+        backup_list.currentItemChanged.connect(lambda _cur_item, _prev_item: _update_backup_diff())
+        restore_btn.clicked.connect(_restore_selected_backup)
+        close_btn.clicked.connect(restore_dlg.reject)
+        restore_btn.setEnabled(False)
+        if backup_list.count() > 0:
+            backup_list.setCurrentRow(0)
+            _update_backup_diff()
+        restore_dlg.exec()
 
     def _reload() -> None:
         cur = state.get("path")
