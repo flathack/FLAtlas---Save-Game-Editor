@@ -184,6 +184,14 @@ def _is_version_newer(latest_tag: str, current_tag: str) -> bool:
     return False
 
 
+def _compare_version_tags(left_tag: str, right_tag: str) -> int:
+    if _is_version_newer(left_tag, right_tag):
+        return 1
+    if _is_version_newer(right_tag, left_tag):
+        return -1
+    return 0
+
+
 def _fetch_latest_release() -> dict[str, str] | None:
     req = urlrequest.Request(
         GITHUB_RELEASES_API,
@@ -225,28 +233,152 @@ def _fetch_latest_release() -> dict[str, str] | None:
     return best
 
 
+def _show_release_status_dialog(
+    parent: QWidget | None,
+    *,
+    title: str,
+    headline: str,
+    body: str,
+    tone: str = "info",
+    latest: dict[str, str] | None = None,
+    show_open_button: bool = False,
+) -> None:
+    dlg = QDialog(parent)
+    dlg.setModal(True)
+    dlg.resize(560, 320)
+    dlg.setWindowTitle(title)
+    try:
+        if parent is not None:
+            dlg.setWindowIcon(parent.windowIcon())
+    except Exception:
+        pass
+
+    tone_map = {
+        "success": {"badge_bg": "#dff3e4", "badge_fg": "#1f6f43", "accent": "#2f9e44"},
+        "warning": {"badge_bg": "#fff1d6", "badge_fg": "#8a5a00", "accent": "#c98500"},
+        "error": {"badge_bg": "#fde2e1", "badge_fg": "#9f2d2d", "accent": "#d64545"},
+        "info": {"badge_bg": "#dbeafe", "badge_fg": "#1d4f91", "accent": "#2f6fed"},
+    }
+    palette = tone_map.get(tone, tone_map["info"])
+
+    root = QVBoxLayout(dlg)
+    root.setContentsMargins(18, 18, 18, 18)
+    root.setSpacing(14)
+
+    top = QHBoxLayout()
+    top.setSpacing(14)
+
+    icon_lbl = QLabel(dlg)
+    icon_path = Path(__file__).with_name("images") / "icon.png"
+    icon_pix = QPixmap()
+    if icon_path.exists():
+        icon_pix = QPixmap(str(icon_path)).scaled(84, 84, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    elif parent is not None:
+        try:
+            icon_pix = parent.windowIcon().pixmap(84, 84)
+        except Exception:
+            icon_pix = QPixmap()
+    icon_lbl.setPixmap(icon_pix)
+    icon_lbl.setFixedSize(96, 96)
+    icon_lbl.setAlignment(Qt.AlignCenter)
+    icon_lbl.setStyleSheet(
+        f"background: palette(base); border: 1px solid palette(mid); border-left: 4px solid {palette['accent']}; padding: 6px;"
+    )
+    top.addWidget(icon_lbl, 0, Qt.AlignTop)
+
+    info_col = QVBoxLayout()
+    info_col.setSpacing(6)
+
+    title_lbl = QLabel(title, dlg)
+    title_lbl.setStyleSheet("font-size: 22px; font-weight: 700;")
+    info_col.addWidget(title_lbl)
+
+    badge_lbl = QLabel(headline, dlg)
+    badge_lbl.setStyleSheet(
+        f"background: {palette['badge_bg']}; color: {palette['badge_fg']}; padding: 5px 10px; font-weight: 600; border-radius: 10px;"
+    )
+    info_col.addWidget(badge_lbl, 0, Qt.AlignLeft)
+
+    body_lbl = QLabel(body, dlg)
+    body_lbl.setWordWrap(True)
+    body_lbl.setTextFormat(Qt.RichText)
+    body_lbl.setOpenExternalLinks(True)
+    body_lbl.setTextInteractionFlags(Qt.TextBrowserInteraction)
+    body_lbl.setStyleSheet("color: palette(text);")
+    info_col.addWidget(body_lbl)
+
+    if isinstance(latest, dict) and latest:
+        details: list[str] = []
+        installed_label = _tr_or("savegame_editor.update.installed_label", "Installed")
+        latest_label = _tr_or("savegame_editor.update.latest_label", "Latest")
+        release_name_label = _tr_or("savegame_editor.update.release_name_label", "Release")
+        release_type_label = _tr_or("savegame_editor.update.release_type_label", "Type")
+        details.append(f"<b>{installed_label}:</b> {SAVEGAME_EDITOR_VERSION}")
+        details.append(f"<b>{latest_label}:</b> {str(latest.get('tag', '') or '-')}")
+        details.append(f"<b>{release_name_label}:</b> {str(latest.get('name', '') or '-')}")
+        details.append(f"<b>{release_type_label}:</b> {str(latest.get('type', '') or '-')}")
+        details_lbl = QLabel("<br>".join(details), dlg)
+        details_lbl.setWordWrap(True)
+        details_lbl.setTextFormat(Qt.RichText)
+        details_lbl.setStyleSheet("background: palette(base); border: 1px solid palette(mid); padding: 10px;")
+        info_col.addWidget(details_lbl)
+
+    info_col.addStretch(1)
+    top.addLayout(info_col, 1)
+    root.addLayout(top)
+
+    button_row = QHBoxLayout()
+    button_row.addStretch(1)
+    open_btn = None
+    if show_open_button and isinstance(latest, dict) and str(latest.get("url", "")).strip():
+        open_btn = QPushButton(_tr_or("savegame_editor.update.open", "Open Download"), dlg)
+        button_row.addWidget(open_btn)
+    close_btn = QPushButton(_tr_or("dlg.close", "Close"), dlg)
+    button_row.addWidget(close_btn)
+    root.addLayout(button_row)
+
+    if open_btn is not None:
+        def _open_release() -> None:
+            url = str(latest.get("url", "") or "").strip()
+            if url:
+                try:
+                    webbrowser.open(url)
+                except Exception:
+                    pass
+            dlg.accept()
+
+        open_btn.clicked.connect(_open_release)
+    close_btn.clicked.connect(dlg.accept)
+    dlg.exec()
+
+
 def _check_for_updates_popup(parent: QWidget | None = None, *, verbose: bool = False) -> None:
     latest = _fetch_latest_release()
     if not latest:
         if isinstance(latest, dict) and not latest:
             if verbose:
-                QMessageBox.information(
+                _show_release_status_dialog(
                     parent,
-                    tr("savegame_editor.title"),
-                    tr("savegame_editor.update.no_releases"),
+                    title=tr("savegame_editor.update.title"),
+                    headline=_tr_or("savegame_editor.update.status_no_releases", "No releases found"),
+                    body=tr("savegame_editor.update.no_releases"),
+                    tone="warning",
                 )
             return
         if verbose:
-            QMessageBox.information(
+            _show_release_status_dialog(
                 parent,
-                tr("savegame_editor.title"),
-                tr("savegame_editor.update.check_failed"),
+                title=tr("savegame_editor.update.title"),
+                headline=_tr_or("savegame_editor.update.status_failed", "Update check failed"),
+                body=tr("savegame_editor.update.check_failed"),
+                tone="error",
             )
         return
     latest_tag = str(latest.get("tag") or "").strip()
-    if not latest_tag or not _is_version_newer(latest_tag, SAVEGAME_EDITOR_VERSION):
+    cmp_result = _compare_version_tags(latest_tag, SAVEGAME_EDITOR_VERSION) if latest_tag else 0
+    if cmp_result <= 0:
         if verbose:
-            msg_tpl = tr("savegame_editor.update.current")
+            msg_tpl = tr("savegame_editor.update.ahead" if cmp_result < 0 else "savegame_editor.update.current")
             try:
                 msg = msg_tpl.format(
                     version=SAVEGAME_EDITOR_VERSION,
@@ -260,35 +392,35 @@ def _check_for_updates_popup(parent: QWidget | None = None, *, verbose: bool = F
                     f"Installed: {SAVEGAME_EDITOR_VERSION}\n"
                     f"Online: {latest_tag or SAVEGAME_EDITOR_VERSION}"
                 )
-            QMessageBox.information(
+            _show_release_status_dialog(
                 parent,
-                tr("savegame_editor.title"),
-                msg,
+                title=_tr_or(
+                    "savegame_editor.update.title.ahead" if cmp_result < 0 else "savegame_editor.update.title.current",
+                    "Version Status",
+                ),
+                headline=_tr_or(
+                    "savegame_editor.update.status_ahead" if cmp_result < 0 else "savegame_editor.update.status_current",
+                    "You are up to date",
+                ),
+                body=msg.replace("\n", "<br>"),
+                tone="success",
+                latest=latest,
             )
         return
-    title = tr("savegame_editor.update.title")
-    text = (
-        tr("savegame_editor.update.text").format(
+    _show_release_status_dialog(
+        parent,
+        title=_tr_or("savegame_editor.update.title.available", tr("savegame_editor.update.title")),
+        headline=_tr_or("savegame_editor.update.status_available", "Update available"),
+        body=tr("savegame_editor.update.text").format(
             release_type=str(latest.get("type", "release") or "release"),
             current=SAVEGAME_EDITOR_VERSION,
             latest=latest_tag,
             name=str(latest.get("name", latest_tag) or latest_tag),
-        )
+        ).replace("\n", "<br>"),
+        tone="info",
+        latest=latest,
+        show_open_button=True,
     )
-    box = QMessageBox(parent)
-    box.setIcon(QMessageBox.Information)
-    box.setWindowTitle(title)
-    box.setText(text)
-    open_btn = box.addButton(tr("savegame_editor.update.open"), QMessageBox.AcceptRole)
-    box.addButton(tr("savegame_editor.update.later"), QMessageBox.RejectRole)
-    box.exec()
-    if box.clickedButton() is open_btn:
-        url = str(latest.get("url") or "").strip()
-        if url:
-            try:
-                webbrowser.open(url)
-            except Exception:
-                pass
 
 
 def _check_for_updates_popup_async(parent: QWidget | None = None) -> None:
@@ -316,29 +448,22 @@ def _check_for_updates_popup_async(parent: QWidget | None = None) -> None:
         if not isinstance(latest, dict) or not latest:
             return
         latest_tag = str(latest.get("tag") or "").strip()
-        if not latest_tag or not _is_version_newer(latest_tag, SAVEGAME_EDITOR_VERSION):
+        if not latest_tag or _compare_version_tags(latest_tag, SAVEGAME_EDITOR_VERSION) <= 0:
             return
-        title = tr("savegame_editor.update.title")
-        text = tr("savegame_editor.update.text").format(
-            release_type=str(latest.get("type", "release") or "release"),
-            current=SAVEGAME_EDITOR_VERSION,
-            latest=latest_tag,
-            name=str(latest.get("name", latest_tag) or latest_tag),
+        _show_release_status_dialog(
+            parent,
+            title=_tr_or("savegame_editor.update.title.available", tr("savegame_editor.update.title")),
+            headline=_tr_or("savegame_editor.update.status_available", "Update available"),
+            body=tr("savegame_editor.update.text").format(
+                release_type=str(latest.get("type", "release") or "release"),
+                current=SAVEGAME_EDITOR_VERSION,
+                latest=latest_tag,
+                name=str(latest.get("name", latest_tag) or latest_tag),
+            ).replace("\n", "<br>"),
+            tone="info",
+            latest=latest,
+            show_open_button=True,
         )
-        box = QMessageBox(parent)
-        box.setIcon(QMessageBox.Information)
-        box.setWindowTitle(title)
-        box.setText(text)
-        open_btn = box.addButton(tr("savegame_editor.update.open"), QMessageBox.AcceptRole)
-        box.addButton(tr("savegame_editor.update.later"), QMessageBox.RejectRole)
-        box.exec()
-        if box.clickedButton() is open_btn:
-            url = str(latest.get("url") or "").strip()
-            if url:
-                try:
-                    webbrowser.open(url)
-                except Exception:
-                    pass
 
     QTimer.singleShot(300, _poll)
 
@@ -4341,6 +4466,10 @@ def open_savegame_editor(self):
             return _decode_savegame_player_name(str(player_values.get("name", "")))
         return ""
 
+    def _include_savegame_in_picker(path: Path) -> bool:
+        hidden_names = {"restart.fl", "autosave.fl", "autostart.fl"}
+        return path.name.lower() not in hidden_names
+
     def _refresh_savegame_list(*, select_path: Path | None = None, auto_load: bool = False) -> None:
         save_dirs = _save_dirs()
         files: list[Path] = []
@@ -4348,7 +4477,13 @@ def open_savegame_editor(self):
             if not save_dir.exists() or not save_dir.is_dir():
                 continue
             try:
-                files.extend([p for p in save_dir.iterdir() if p.is_file() and p.suffix.lower() == ".fl"])
+                files.extend(
+                    [
+                        p
+                        for p in save_dir.iterdir()
+                        if p.is_file() and p.suffix.lower() == ".fl" and _include_savegame_in_picker(p)
+                    ]
+                )
             except Exception:
                 continue
         files = self._dedupe_paths(files)
