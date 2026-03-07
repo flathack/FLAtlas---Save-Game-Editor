@@ -841,10 +841,12 @@ class _SavegameEditorHost(QMainWindow):
             enc = b"FLS1" + self._fls1_crypt(plain)
             path.write_bytes(enc)
             return
+        plain_text = str(text or "")
         try:
-            path.write_text(text, encoding="cp1252")
+            data = plain_text.encode("cp1252")
         except UnicodeEncodeError:
-            path.write_text(text, encoding="utf-8")
+            data = plain_text.encode("utf-8")
+        path.write_bytes(data)
 
     def _find_ini_section_bounds(self, lines: list[str], section_name: str, nick: str | None) -> tuple[int, int] | None:
         want = str(section_name or "").strip().lower()
@@ -1816,6 +1818,32 @@ def open_savegame_editor(self):
 
     _set_editor_title(None)
 
+    def _recent_save_paths() -> list[Path]:
+        raw = list(self._cfg.get("settings.savegame_recent_files", []) or [])
+        out: list[Path] = []
+        seen: set[str] = set()
+        for value in raw:
+            txt = str(value or "").strip()
+            if not txt:
+                continue
+            p = Path(txt)
+            key = str(p).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(p)
+        return out
+
+    def _remember_recent_save(path: Path) -> None:
+        cur = Path(str(path))
+        items = [cur]
+        for existing in _recent_save_paths():
+            if str(existing).lower() != str(cur).lower():
+                items.append(existing)
+        trimmed = [str(p) for p in items[:8]]
+        self._cfg.set("settings.savegame_recent_files", trimmed)
+        _rebuild_recent_menu()
+
     save_paths_cfg_raw = str(self._cfg.get("settings.savegame_path", "") or "").strip()
     save_paths_cfg = self._canonical_savegame_dirs_from_input(save_paths_cfg_raw)
     save_paths_initial = save_paths_cfg or default_dirs or ([default_dir] if str(default_dir).strip() else [])
@@ -1932,6 +1960,9 @@ def open_savegame_editor(self):
     locked_view.setMinimumHeight(240)
     locked_view.setStyleSheet("QGraphicsView { border: 1px solid palette(mid); }")
     locked_map_l.addWidget(locked_view, 1)
+    locked_legend = QLabel(_tr_or("savegame_editor.legend.locked", "Gray: inactive  Red: locked"), tab_locked)
+    locked_legend.setStyleSheet("color: #9aa0a6;")
+    locked_map_l.addWidget(locked_legend)
     unlock_all_btn = QPushButton(tr("savegame_editor.unlock_all"), tab_locked)
     locked_map_l.addWidget(unlock_all_btn, 0, Qt.AlignRight)
     visited_map_l = QVBoxLayout(tab_visited)
@@ -1943,6 +1974,12 @@ def open_savegame_editor(self):
     visited_view.setMinimumHeight(240)
     visited_view.setStyleSheet("QGraphicsView { border: 1px solid palette(mid); }")
     visited_map_l.addWidget(visited_view, 1)
+    visited_legend = QLabel(
+        _tr_or("savegame_editor.legend.visited", "Gray: unknown  Green: visited  Red: current system"),
+        tab_visited,
+    )
+    visited_legend.setStyleSheet("color: #9aa0a6;")
+    visited_map_l.addWidget(visited_legend)
     visited_btn_row = QHBoxLayout()
     visited_btn_row.addStretch(1)
     visit_unlock_all_btn = QPushButton(tr("savegame_editor.visit_unlock_all"), tab_visited)
@@ -2088,6 +2125,10 @@ def open_savegame_editor(self):
 
     equip_lbl = QLabel(tr("savegame_editor.equip"), dlg)
     ship_l.addWidget(equip_lbl)
+    equip_filter_edit = QLineEdit(dlg)
+    equip_filter_edit.setClearButtonEnabled(True)
+    equip_filter_edit.setPlaceholderText(_tr_or("savegame_editor.filter_equip", "Filter equipment..."))
+    ship_l.addWidget(equip_filter_edit)
     equip_tbl = QTableWidget(0, 2, dlg)
     equip_tbl.setHorizontalHeaderLabels([tr("savegame_editor.col.item"), tr("savegame_editor.col.hardpoint")])
     eh = equip_tbl.horizontalHeader()
@@ -2109,6 +2150,10 @@ def open_savegame_editor(self):
 
     cargo_lbl = QLabel(tr("savegame_editor.cargo"), dlg)
     ship_l.addWidget(cargo_lbl)
+    cargo_filter_edit = QLineEdit(dlg)
+    cargo_filter_edit.setClearButtonEnabled(True)
+    cargo_filter_edit.setPlaceholderText(_tr_or("savegame_editor.filter_cargo", "Filter cargo..."))
+    ship_l.addWidget(cargo_filter_edit)
     fixed_cargo_row = QWidget(dlg)
     fixed_cargo_l = QHBoxLayout(fixed_cargo_row)
     fixed_cargo_l.setContentsMargins(0, 0, 0, 0)
@@ -2148,6 +2193,10 @@ def open_savegame_editor(self):
 
     houses_lbl = QLabel(tr("savegame_editor.houses"))
     rep_l.addWidget(houses_lbl)
+    houses_filter_edit = QLineEdit(dlg)
+    houses_filter_edit.setClearButtonEnabled(True)
+    houses_filter_edit.setPlaceholderText(_tr_or("savegame_editor.filter_houses", "Filter factions..."))
+    rep_l.addWidget(houses_filter_edit)
     houses_tbl = QTableWidget(0, 3, dlg)
     houses_tbl.setHorizontalHeaderLabels(
         [tr("savegame_editor.col.faction"), tr("savegame_editor.col.rep"), tr("savegame_editor.col.slider")]
@@ -2196,6 +2245,58 @@ def open_savegame_editor(self):
     }
     map_state: dict[str, object] = {"locked_ids": set(), "visit_ids": set()}
 
+    def _filter_tokens(text: str) -> list[str]:
+        raw = str(text or "").strip().lower()
+        return [tok for tok in raw.split() if tok]
+
+    def _apply_table_row_filter(tbl: QTableWidget, row_texts: list[str], query: str) -> None:
+        tokens = _filter_tokens(query)
+        if not tokens:
+            for row in range(tbl.rowCount()):
+                tbl.setRowHidden(row, False)
+            return
+        for row in range(tbl.rowCount()):
+            hay = row_texts[row] if row < len(row_texts) else ""
+            tbl.setRowHidden(row, not all(tok in hay for tok in tokens))
+
+    def _refresh_equip_table_filter() -> None:
+        row_texts: list[str] = []
+        for row in range(equip_tbl.rowCount()):
+            item_cb = equip_tbl.cellWidget(row, 0)
+            hp_cb = equip_tbl.cellWidget(row, 1)
+            nick = _combo_item_nick(item_cb) if isinstance(item_cb, QComboBox) else ""
+            item_text = str(item_cb.currentText() or "").strip() if isinstance(item_cb, QComboBox) else ""
+            hp_text = _hardpoint_from_widget(hp_cb)
+            row_texts.append(" ".join(part.lower() for part in [nick, item_text, hp_text] if part))
+        _apply_table_row_filter(equip_tbl, row_texts, equip_filter_edit.text())
+
+    def _refresh_cargo_table_filter() -> None:
+        row_texts: list[str] = []
+        for row in range(cargo_tbl.rowCount()):
+            item_cb = cargo_tbl.cellWidget(row, 0)
+            amt_spin = cargo_tbl.cellWidget(row, 1)
+            nick = _combo_item_nick(item_cb) if isinstance(item_cb, QComboBox) else ""
+            item_text = str(item_cb.currentText() or "").strip() if isinstance(item_cb, QComboBox) else ""
+            amount = str(int(amt_spin.value())) if isinstance(amt_spin, QSpinBox) else ""
+            row_texts.append(" ".join(part.lower() for part in [nick, item_text, amount] if part))
+        _apply_table_row_filter(cargo_tbl, row_texts, cargo_filter_edit.text())
+
+    def _refresh_houses_table_filter() -> None:
+        row_texts: list[str] = []
+        for row in range(houses_tbl.rowCount()):
+            item = houses_tbl.item(row, 0)
+            fac_nick = str(item.data(Qt.UserRole) if item else "").strip()
+            fac_label = str(item.text() if item else "").strip()
+            rep_spin = houses_tbl.cellWidget(row, 1)
+            rep_val = _fmt_rep(rep_spin.value()) if isinstance(rep_spin, QDoubleSpinBox) else ""
+            row_texts.append(" ".join(part.lower() for part in [fac_nick, fac_label, rep_val] if part))
+        _apply_table_row_filter(houses_tbl, row_texts, houses_filter_edit.text())
+
+    def _refresh_all_table_filters() -> None:
+        _refresh_equip_table_filter()
+        _refresh_cargo_table_filter()
+        _refresh_houses_table_filter()
+
     def _clear_maps() -> None:
         locked_scene.clear()
         visited_scene.clear()
@@ -2236,6 +2337,7 @@ def open_savegame_editor(self):
         equip_tbl.setRowCount(0)
         cargo_tbl.setRowCount(0)
         houses_tbl.setRowCount(0)
+        _refresh_all_table_filters()
         _set_story_lock_ui(False, 0)
         _clear_maps()
         for w in (
@@ -2603,6 +2705,7 @@ def open_savegame_editor(self):
         if bad_visit_ids_ui:
             cleaned_visits = set(int(v) for v in current_visit_ids if int(v) in known_visit_ids)
             _set_pending_visit_ids(cleaned_visits)
+        _refresh_all_table_filters()
         _refresh_hardpoint_hint()
         self.statusBar().showMessage(tr("savegame_editor.pending_changes"))
         QMessageBox.information(dlg, tr("savegame_editor.title"), tr("savegame_editor.validate.cleanup_done"))
@@ -2914,6 +3017,9 @@ def open_savegame_editor(self):
                 existing.add(pair)
                 _add_equip_row(item_n, hp, extra or "1", defer_refresh=True)
                 added += 1
+        if removed_any or add_rows:
+            _refresh_equip_table_filter()
+            _refresh_hardpoint_hint()
 
     def _typed_filter_for_hardpoint(hardpoint: str, candidates: list[str]) -> list[str]:
         hp = str(hardpoint or "").strip().lower()
@@ -3104,11 +3210,13 @@ def open_savegame_editor(self):
 
         rep_spin.valueChanged.connect(_from_spin)
         rep_slider.valueChanged.connect(_from_slider)
+        rep_spin.valueChanged.connect(lambda _v: _refresh_houses_table_filter())
 
     def _set_houses(rows: list[tuple[str, float]]) -> None:
         houses_tbl.setRowCount(0)
         for faction, rep in rows:
             _insert_house_row(faction, rep)
+        _refresh_houses_table_filter()
 
     def _locked_gate_ids_from_lines(lines: list[str]) -> set[int]:
         out: set[int] = set()
@@ -3338,6 +3446,21 @@ def open_savegame_editor(self):
         state["current_system"] = _current_system_nick().strip()
         _render_visited_map(set(state.get("visit_ids", set()) or set()))
 
+    def _center_current_system() -> None:
+        target = str(state.get("current_system", "") or "").strip().upper()
+        if not target:
+            visited_view.centerOn(visited_scene.sceneRect().center())
+            return
+        for item in visited_scene.items():
+            try:
+                if str(item.data(0) or "").strip().upper() != target:
+                    continue
+                visited_view.centerOn(item.sceneBoundingRect().center())
+                return
+            except Exception:
+                continue
+        visited_view.centerOn(visited_scene.sceneRect().center())
+
     def _refresh_equip_row_filters(row: int) -> None:
         if row < 0 or row >= equip_tbl.rowCount():
             return
@@ -3426,6 +3549,8 @@ def open_savegame_editor(self):
             _set_hardpoint_combo_value(hp_cb, hardpoint)
         hp_cb.currentIndexChanged.connect(lambda _idx, w=hp_cb: _refresh_equip_row_filters_for_hp_widget(w))
         hp_cb.currentTextChanged.connect(lambda _txt, w=hp_cb: _refresh_equip_row_filters_for_hp_widget(w))
+        item_cb.currentIndexChanged.connect(lambda _idx: _refresh_equip_table_filter())
+        item_cb.currentTextChanged.connect(lambda _txt: _refresh_equip_table_filter())
         if item_nick:
             _set_item_combo_value(item_cb, item_nick)
             item_cb.setProperty("fl_force_empty", False)
@@ -3438,6 +3563,7 @@ def open_savegame_editor(self):
             else:
                 _set_item_combo_value(item_cb, "")
             _refresh_hardpoint_hint()
+        _refresh_equip_table_filter()
 
     def _add_cargo_row(item_nick: str = "", amount: int = 1, extra: str = ", , 0") -> None:
         row = cargo_tbl.rowCount()
@@ -3451,6 +3577,10 @@ def open_savegame_editor(self):
         amt_spin.setRange(0, 1_000_000)
         amt_spin.setValue(max(0, int(amount)))
         cargo_tbl.setCellWidget(row, 1, amt_spin)
+        item_cb.currentIndexChanged.connect(lambda _idx: _refresh_cargo_table_filter())
+        item_cb.currentTextChanged.connect(lambda _txt: _refresh_cargo_table_filter())
+        amt_spin.valueChanged.connect(lambda _v: _refresh_cargo_table_filter())
+        _refresh_cargo_table_filter()
 
     def _equip_rows() -> list[tuple[str, str, str]]:
         out: list[tuple[str, str, str]] = []
@@ -3664,6 +3794,15 @@ def open_savegame_editor(self):
                 return inner
         return txt
 
+    def _story_edit_lock_active(mission_num: int) -> bool:
+        # Story-related saves can still crash on relocated system/base even
+        # outside the original 1..12 mission range, so lock conservatively.
+        try:
+            mn = int(mission_num)
+        except Exception:
+            mn = 0
+        return mn != 0
+
     def _set_story_lock_ui(active: bool, mission_num: int = 0) -> None:
         locked = bool(active)
         state["story_locked"] = locked
@@ -3781,6 +3920,96 @@ def open_savegame_editor(self):
             "locked_ids": sorted(int(v) for v in set(state.get("locked_ids", set()) or set()) if int(v) > 0),
             "visit_ids": sorted(int(v) for v in set(state.get("visit_ids", set()) or set()) if int(v) > 0),
         }
+
+    def _build_save_preview_lines() -> list[str]:
+        baseline = state.get("baseline_signature")
+        current = _current_editor_signature()
+        if not isinstance(baseline, dict):
+            return []
+        lines: list[str] = []
+
+        def _append_value_change(label: str, before: object, after: object) -> None:
+            if before == after:
+                return
+            lines.append(f"{label}: {before!s} -> {after!s}")
+
+        _append_value_change(tr("savegame_editor.rank"), baseline.get("rank", 0), current.get("rank", 0))
+        _append_value_change(tr("savegame_editor.money"), baseline.get("money", 0), current.get("money", 0))
+        _append_value_change(tr("savegame_editor.description"), baseline.get("description", ""), current.get("description", ""))
+        _append_value_change(tr("savegame_editor.rep_group"), baseline.get("rep_group", ""), current.get("rep_group", ""))
+        _append_value_change(tr("savegame_editor.system"), baseline.get("system", ""), current.get("system", ""))
+        _append_value_change(tr("savegame_editor.base"), baseline.get("base", ""), current.get("base", ""))
+        _append_value_change(tr("savegame_editor.ship_archetype"), baseline.get("ship", ""), current.get("ship", ""))
+
+        baseline_fixed = dict(baseline.get("fixed_cargo", {}) or {})
+        current_fixed = dict(current.get("fixed_cargo", {}) or {})
+        _append_value_change("ShieldBattery", baseline_fixed.get("battery", 0), current_fixed.get("battery", 0))
+        _append_value_change("RepairKit", baseline_fixed.get("repair", 0), current_fixed.get("repair", 0))
+
+        def _append_count_change(label: str, key: str) -> None:
+            before_list = list(baseline.get(key, []) or [])
+            after_list = list(current.get(key, []) or [])
+            if before_list != after_list:
+                lines.append(
+                    _tr_or("savegame_editor.save_preview_count", "{label}: {before} -> {after} entries").format(
+                        label=label,
+                        before=len(before_list),
+                        after=len(after_list),
+                    )
+                )
+
+        _append_count_change(tr("savegame_editor.equip"), "equip")
+        _append_count_change(tr("savegame_editor.cargo"), "cargo")
+        _append_count_change(tr("savegame_editor.houses"), "houses")
+        _append_count_change(tr("savegame_editor.map_tab.locked"), "locked_ids")
+        _append_count_change(tr("savegame_editor.map_tab.visited"), "visit_ids")
+
+        baseline_trent = dict(baseline.get("trent", {}) or {})
+        current_trent = dict(current.get("trent", {}) or {})
+        changed_trent = sorted(key for key in set(baseline_trent) | set(current_trent) if baseline_trent.get(key) != current_trent.get(key))
+        if changed_trent:
+            lines.append(
+                _tr_or("savegame_editor.save_preview_trent", "Trent appearance changed: {items}").format(
+                    items=", ".join(changed_trent)
+                )
+            )
+
+        baseline_core = dict(baseline.get("core", {}) or {})
+        current_core = dict(current.get("core", {}) or {})
+        changed_core = sorted(key for key in set(baseline_core) | set(current_core) if baseline_core.get(key) != current_core.get(key))
+        if changed_core:
+            lines.append(
+                _tr_or("savegame_editor.save_preview_core", "Core equipment changed: {items}").format(
+                    items=", ".join(changed_core)
+                )
+            )
+
+        return lines
+
+    def _confirm_save_with_preview(target_path: Path) -> bool:
+        if not _has_unsaved_changes():
+            return True
+        preview_lines = _build_save_preview_lines()
+        box = QMessageBox(dlg)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle(_tr_or("savegame_editor.save_preview_title", "Review Changes"))
+        box.setText(
+            _tr_or("savegame_editor.save_preview_text", "Save the current changes to:\n{path}").format(
+                path=str(target_path)
+            )
+        )
+        if preview_lines:
+            head = "\n".join(f"- {line}" for line in preview_lines[:8])
+            if len(preview_lines) > 8:
+                head += "\n" + _tr_or("savegame_editor.save_preview_more", "... and {count} more changes.").format(
+                    count=len(preview_lines) - 8
+                )
+            box.setInformativeText(head)
+            box.setDetailedText("\n".join(f"- {line}" for line in preview_lines))
+        save_btn_local = box.addButton(_tr_or("dlg.save", "Save"), QMessageBox.AcceptRole)
+        box.addButton(_tr_or("dlg.cancel", "Cancel"), QMessageBox.RejectRole)
+        box.exec()
+        return box.clickedButton() is save_btn_local
 
     def _has_unsaved_changes() -> bool:
         if not isinstance(state.get("path"), Path):
@@ -4030,10 +4259,11 @@ def open_savegame_editor(self):
                         story_mission_num = 0
                     break
             _set_savegame_loaded_state()
-            _set_story_lock_ui(1 <= int(story_mission_num) <= 12, story_mission_num)
+            _set_story_lock_ui(_story_edit_lock_active(story_mission_num), story_mission_num)
             _set_editor_title(path)
             info_lbl.setText("")
             state["path"] = path
+            _remember_recent_save(path)
             state["last_ship_nick"] = _current_ship_nick()
             state["baseline_signature"] = _current_editor_signature()
             _set_loading_progress(100)
@@ -4044,6 +4274,7 @@ def open_savegame_editor(self):
             cargo_tbl.setUpdatesEnabled(True)
             equip_tbl.setUpdatesEnabled(True)
             dlg.setUpdatesEnabled(True)
+            _refresh_all_table_filters()
             _refresh_hardpoint_hint()
 
     def _parse_with_loading(path: Path) -> tuple[bool, str]:
@@ -4575,59 +4806,55 @@ def open_savegame_editor(self):
             return
         _refresh_savegame_list(select_path=chosen_path, auto_load=False)
 
-    def _reload() -> None:
-        cur = state.get("path")
-        if not isinstance(cur, Path):
-            QMessageBox.information(dlg, tr("savegame_editor.title"), tr("savegame_editor.no_file"))
+    def _open_recent_save(raw_path: str) -> None:
+        chosen_path = Path(str(raw_path or "").strip())
+        if not str(chosen_path) or not chosen_path.exists() or not chosen_path.is_file():
+            QMessageBox.warning(
+                dlg,
+                tr("savegame_editor.title"),
+                _tr_or("savegame_editor.recent_missing", "Recent savegame not found:\n{path}").format(path=str(chosen_path)),
+            )
             return
-        ok, msg = _parse_with_loading(cur)
+        merged_dirs = self._canonical_savegame_dirs_from_input(save_dir_edit.text().strip())
+        merged_dirs.extend([chosen_path.parent])
+        save_dir_edit.setText(self._savegame_dirs_to_text(merged_dirs))
+        _apply_save_dir()
+        if not _ensure_game_data_loaded():
+            return
+        ok, msg = _parse_with_loading(chosen_path)
         if not ok:
             QMessageBox.warning(dlg, tr("savegame_editor.title"), msg)
+            return
+        _refresh_savegame_list(select_path=chosen_path, auto_load=False)
 
-    def _apply_template() -> None:
-        tpl = template_cb.currentData()
-        if not isinstance(tpl, dict):
+    def _rebuild_recent_menu() -> None:
+        recent_menu.clear()
+        recent_paths = [p for p in _recent_save_paths() if p.exists() and p.is_file()]
+        if not recent_paths:
+            act_empty = recent_menu.addAction(_tr_or("savegame_editor.recent_empty", "No recent savegames"))
+            act_empty.setEnabled(False)
             return
-        houses_obj = tpl.get("houses")
-        if not isinstance(houses_obj, dict) or not houses_obj:
-            return
-        try:
-            houses_in = {str(k).strip(): float(v) for k, v in houses_obj.items() if str(k).strip()}
-        except Exception:
-            return
-        template_faction = str(tpl.get("faction") or "").strip()
-        rows: list[tuple[str, float]] = []
-        for fac, val in houses_in.items():
-            rep = float(val)
-            rep = max(-0.91, min(0.91, rep))
-            rows.append((fac, rep))
-        rows.sort(key=lambda x: x[0].lower())
-        _set_houses(rows)
-        if template_faction:
-            _set_rep_group_value(template_faction)
-        info_lbl.setText(
-            tr("savegame_editor.template_applied").format(
-                template=str(tpl.get("name") or ""),
-                faction=self._faction_ui_label(template_faction) or template_faction or tr("savegame_editor.template_none"),
-            )
-        )
+        for path in recent_paths:
+            act = recent_menu.addAction(path.name)
+            act.setToolTip(str(path))
+            act.triggered.connect(lambda _checked=False, p=str(path): _open_recent_save(p))
 
-    def _save() -> None:
+    def _save_to_path(target_path: Path) -> bool:
         cur = state.get("path")
         if not isinstance(cur, Path):
             QMessageBox.information(dlg, tr("savegame_editor.title"), tr("savegame_editor.no_file"))
-            return
+            return False
         try:
             raw = self._read_text_best_effort(cur)
         except Exception as exc:
             QMessageBox.critical(dlg, tr("msg.save_error"), tr("savegame_editor.save_failed").format(error=exc))
-            return
+            return False
         newline = "\r\n" if "\r\n" in raw else "\n"
         lines = raw.splitlines()
         bounds = self._find_ini_section_bounds(lines, "Player", None)
         if bounds is None:
             QMessageBox.warning(dlg, tr("savegame_editor.title"), tr("savegame_editor.player_missing"))
-            return
+            return False
         s, e = bounds
         player = list(lines[s:e])
         orig_system = ""
@@ -4647,7 +4874,6 @@ def open_savegame_editor(self):
         new_system = _current_system_nick()
         new_base = _current_base_nick()
 
-        # Freelancer can crash when moving system/base in an active story mission save.
         story_mission_num = 0
         story_bounds = self._find_ini_section_bounds(lines, "StoryInfo", None)
         if story_bounds is not None:
@@ -4664,7 +4890,7 @@ def open_savegame_editor(self):
                 except Exception:
                     story_mission_num = 0
                 break
-        story_active = 1 <= int(story_mission_num) <= 12
+        story_active = _story_edit_lock_active(story_mission_num)
         if story_active:
             changed_system = bool(orig_system and new_system) and (orig_system.strip().lower() != new_system.strip().lower())
             changed_base = bool(orig_base and new_base) and (orig_base.strip().lower() != new_base.strip().lower())
@@ -4674,7 +4900,7 @@ def open_savegame_editor(self):
                     tr("savegame_editor.title"),
                     tr("savegame_editor.story_save_blocked").format(mn=story_mission_num),
                 )
-                return
+                return False
 
         player, _ = self._set_single_key_line_in_section(player, "rank", f"rank = {int(rank_spin.value())}")
         player, _ = self._set_single_key_line_in_section(player, "money", f"money = {int(money_spin.value())}")
@@ -4726,11 +4952,9 @@ def open_savegame_editor(self):
             QMessageBox.warning(
                 dlg,
                 tr("savegame_editor.title"),
-                "Save aborted: required core components are missing.\n\n"
-                + "Missing: "
-                + ", ".join(missing_core),
+                "Save aborted: required core components are missing.\n\n" + "Missing: " + ", ".join(missing_core),
             )
-            return
+            return False
 
         invalid_hp_rows = _collect_invalid_hardpoint_rows(current_ship_nick, _equip_rows())
         if invalid_hp_rows:
@@ -4744,59 +4968,37 @@ def open_savegame_editor(self):
                     hps=", ".join(hp_list[:20]),
                 ),
             )
-            return
+            return False
 
-        house_lines: list[str] = []
-        for faction, rep in _current_houses():
-            house_lines.append(f"house = {_fmt_rep(rep)}, {faction}")
-
+        house_lines = [f"house = {_fmt_rep(rep)}, {faction}" for faction, rep in _current_houses()]
         equip_lines: list[str] = []
-        core_component_pairs = [
-            ("power", core_power_cb),
-            ("engine", core_engine_cb),
-            ("scanner", core_scanner_cb),
-            ("tractor", core_tractor_cb),
-        ]
-        for _core_name, core_cb in core_component_pairs:
+        for _core_name, core_cb in [("power", core_power_cb), ("engine", core_engine_cb), ("scanner", core_scanner_cb), ("tractor", core_tractor_cb)]:
             core_nick = _combo_item_nick(core_cb)
             item_token = _item_token_for_save(core_nick)
-            if not item_token:
-                continue
-            tail = str(core_cb.property("fl_extra") or "").strip() or "1"
-            equip_lines.append(f"equip = {item_token}, , {tail}")
+            if item_token:
+                tail = str(core_cb.property("fl_extra") or "").strip() or "1"
+                equip_lines.append(f"equip = {item_token}, , {tail}")
         for item_nick, hardpoint, extra in _equip_rows():
             item_token = _item_token_for_save(item_nick)
             if not item_token:
                 continue
-            tail = str(extra or "").strip()
-            if not tail:
-                tail = "1"
-            if hardpoint:
-                equip_lines.append(f"equip = {item_token}, {hardpoint}, {tail}")
-            else:
-                equip_lines.append(f"equip = {item_token}, , {tail}")
+            tail = str(extra or "").strip() or "1"
+            equip_lines.append(f"equip = {item_token}, {hardpoint if hardpoint else ''}, {tail}" if hardpoint else f"equip = {item_token}, , {tail}")
 
         cargo_lines: list[str] = []
-        fixed_cargo_pairs = [
-            ("ge_s_battery_01", int(fixed_battery_spin.value())),
-            ("ge_s_repair_01", int(fixed_repair_spin.value())),
-        ]
-        for fixed_nick, fixed_amount in fixed_cargo_pairs:
+        for fixed_nick, fixed_amount in [("ge_s_battery_01", int(fixed_battery_spin.value())), ("ge_s_repair_01", int(fixed_repair_spin.value()))]:
             if int(fixed_amount) <= 0:
                 continue
             item_token = _item_token_for_save(fixed_nick)
-            if not item_token:
-                continue
-            cargo_lines.append(f"cargo = {item_token}, {int(fixed_amount)}, , , 0")
+            if item_token:
+                cargo_lines.append(f"cargo = {item_token}, {int(fixed_amount)}, , , 0")
         for item_nick, amount, extra in _cargo_rows():
             if str(item_nick or "").strip().lower() in {"ge_s_battery_01", "ge_s_repair_01"}:
                 continue
             item_token = _item_token_for_save(item_nick)
             if not item_token:
                 continue
-            tail = str(extra or "").strip()
-            if not tail:
-                tail = ", , 0"
+            tail = str(extra or "").strip() or ", , 0"
             cargo_lines.append(f"cargo = {item_token}, {int(amount)}, {tail}")
 
         def _line_key(raw_line: str) -> str:
@@ -4805,9 +5007,7 @@ def open_savegame_editor(self):
                 return ""
             return str(core.split("=", 1)[0] or "").strip().lower()
 
-        def _replace_key_block(
-            section_lines: list[str], keys: set[str], replacement_lines: list[str]
-        ) -> list[str]:
+        def _replace_key_block(section_lines: list[str], keys: set[str], replacement_lines: list[str]) -> list[str]:
             if not section_lines:
                 return []
             header = section_lines[0]
@@ -4831,9 +5031,7 @@ def open_savegame_editor(self):
         lock_lines = [f"locked_gate = {hid}" for hid in pending_locked]
         visit_lines: list[str] = []
         for hid in pending_visit:
-            raw_v = str(visit_line_by_id.get(int(hid), "") or "").strip()
-            if not raw_v:
-                raw_v = f"{int(hid)}, 1"
+            raw_v = str(visit_line_by_id.get(int(hid), "") or "").strip() or f"{int(hid)}, 1"
             visit_lines.append(f"visit = {raw_v}")
         player = _replace_key_block(player, {"locked_gate", "npc_locked_gate"}, lock_lines)
         player = _replace_key_block(player, {"visit"}, visit_lines)
@@ -4842,30 +5040,133 @@ def open_savegame_editor(self):
         player = _replace_key_block(player, {"house"}, house_lines)
         out_lines = lines[:s] + player + lines[e:]
 
-        backup = cur.with_name(f"{cur.name}.FLAtlasBAK")
+        backup = target_path.with_name(f"{target_path.name}.FLAtlasBAK")
         try:
             shutil.copy2(str(cur), str(backup))
             text = newline.join(out_lines)
             if not text.endswith(newline):
                 text += newline
-            self._write_text_preserve_format(cur, text)
+            self._write_text_preserve_format(target_path, text)
         except Exception as exc:
             QMessageBox.critical(dlg, tr("msg.save_error"), tr("savegame_editor.save_failed").format(error=exc))
-            return
-        self.statusBar().showMessage(tr("savegame_editor.saved").format(path=str(cur), backup=str(backup)))
-        info_lbl.setText(tr("savegame_editor.saved").format(path=str(cur), backup=str(backup)))
+            return False
         state["baseline_signature"] = _current_editor_signature()
+        state["path"] = target_path
+        _set_editor_title(target_path)
+        _remember_recent_save(target_path)
+        self.statusBar().showMessage(tr("savegame_editor.saved").format(path=str(target_path), backup=str(backup)))
+        info_lbl.setText(tr("savegame_editor.saved").format(path=str(target_path), backup=str(backup)))
+        _refresh_savegame_list(select_path=target_path, auto_load=False)
+        return True
+
+    def _save_as() -> None:
+        cur = state.get("path")
+        start_dir = str(cur.parent) if isinstance(cur, Path) else (str(_save_dirs()[0]) if _save_dirs() else str(Path.home()))
+        chosen, _flt = QFileDialog.getSaveFileName(
+            dlg,
+            _tr_or("savegame_editor.save_as", "Save As..."),
+            str(Path(start_dir) / (cur.name if isinstance(cur, Path) else "savegame_copy.fl")),
+            tr("savegame_editor.file_filter"),
+        )
+        if not chosen:
+            return
+        target = Path(chosen)
+        if target.suffix.lower() != ".fl":
+            target = target.with_suffix(".fl")
+        if not _confirm_save_with_preview(target):
+            return
+        _save_to_path(target)
+
+    def _restore_backup() -> None:
+        cur = state.get("path")
+        if not isinstance(cur, Path):
+            QMessageBox.information(dlg, tr("savegame_editor.title"), tr("savegame_editor.no_file"))
+            return
+        backup = cur.with_name(f"{cur.name}.FLAtlasBAK")
+        if not backup.exists():
+            QMessageBox.information(
+                dlg,
+                tr("savegame_editor.title"),
+                _tr_or("savegame_editor.backup_missing", "No FLAtlas backup found for:\n{path}").format(path=str(cur)),
+            )
+            return
+        try:
+            shutil.copy2(str(backup), str(cur))
+        except Exception as exc:
+            QMessageBox.warning(
+                dlg,
+                tr("savegame_editor.title"),
+                _tr_or("savegame_editor.backup_restore_failed", "Could not restore backup:\n{error}").format(error=str(exc)),
+            )
+            return
+        ok, msg = _parse_with_loading(cur)
+        if not ok:
+            QMessageBox.warning(dlg, tr("savegame_editor.title"), msg)
+            return
+        self.statusBar().showMessage(
+            _tr_or("savegame_editor.backup_restored", "Backup restored: {path}").format(path=str(backup))
+        )
+
+    def _reload() -> None:
+        cur = state.get("path")
+        if not isinstance(cur, Path):
+            QMessageBox.information(dlg, tr("savegame_editor.title"), tr("savegame_editor.no_file"))
+            return
+        ok, msg = _parse_with_loading(cur)
+        if not ok:
+            QMessageBox.warning(dlg, tr("savegame_editor.title"), msg)
+
+    def _apply_template() -> None:
+        tpl = template_cb.currentData()
+        if not isinstance(tpl, dict):
+            return
+        houses_obj = tpl.get("houses")
+        if not isinstance(houses_obj, dict) or not houses_obj:
+            return
+        try:
+            houses_in = {str(k).strip(): float(v) for k, v in houses_obj.items() if str(k).strip()}
+        except Exception:
+            return
+        template_faction = str(tpl.get("faction") or "").strip()
+        rows: list[tuple[str, float]] = []
+        for fac, val in houses_in.items():
+            rep = float(val)
+            rep = max(-0.91, min(0.91, rep))
+            rows.append((fac, rep))
+        rows.sort(key=lambda x: x[0].lower())
+        _set_houses(rows)
+        if template_faction:
+            _set_rep_group_value(template_faction)
+        info_lbl.setText(
+            tr("savegame_editor.template_applied").format(
+                template=str(tpl.get("name") or ""),
+                faction=self._faction_ui_label(template_faction) or template_faction or tr("savegame_editor.template_none"),
+            )
+        )
+
+    def _save() -> None:
+        cur = state.get("path")
+        if not isinstance(cur, Path):
+            QMessageBox.information(dlg, tr("savegame_editor.title"), tr("savegame_editor.no_file"))
+            return
+        if not _confirm_save_with_preview(cur):
+            return
+        _save_to_path(cur)
 
     act_file_open = file_menu.addAction(tr("savegame_editor.open"))
+    recent_menu = file_menu.addMenu(_tr_or("savegame_editor.recent", "Open Recent"))
     act_file_load_selected = file_menu.addAction(tr("savegame_editor.load_selected"))
     act_file_reload = file_menu.addAction(tr("savegame_editor.reload"))
     act_file_save = file_menu.addAction(tr("savegame_editor.save"))
+    act_file_save_as = file_menu.addAction(_tr_or("savegame_editor.save_as", "Save As..."))
     file_menu.addSeparator()
+    act_file_restore_backup = file_menu.addAction(_tr_or("savegame_editor.restore_backup", "Restore Backup"))
     act_file_refresh = file_menu.addAction(tr("savegame_editor.refresh_list"))
     file_menu.addSeparator()
     act_file_close = file_menu.addAction(tr("dlg.close"))
     act_settings_paths = edit_menu.addAction(tr("savegame_editor.path_settings"))
     edit_menu.addSeparator()
+    act_view_center_current = view_menu.addAction(_tr_or("savegame_editor.center_current_system", "Center Current System"))
     act_validate = tools_menu.addAction(tr("savegame_editor.validate"))
     tools_menu.addSeparator()
     act_help_reset_config = tools_menu.addAction(tr("savegame_editor.help.reset_config"))
@@ -4892,6 +5193,7 @@ def open_savegame_editor(self):
         act.setCheckable(True)
         act.setChecked(c.lower() == str(get_language() or "").lower())
         lang_actions[c] = act
+    _rebuild_recent_menu()
 
     ship_archetype_cb.currentIndexChanged.connect(lambda _idx: _on_ship_changed())
     ship_archetype_cb.currentTextChanged.connect(lambda _txt: _on_ship_changed())
@@ -4899,11 +5201,16 @@ def open_savegame_editor(self):
     system_cb.currentTextChanged.connect(lambda _txt: (_rebuild_base_combo(_current_system_nick(), _current_base_nick()), _update_current_system_marker()))
     equip_add_btn.clicked.connect(lambda: _add_equip_row("", ""))
     equip_del_btn.clicked.connect(
-        lambda: (equip_tbl.removeRow(equip_tbl.currentRow()), _refresh_hardpoint_hint()) if equip_tbl.currentRow() >= 0 else None
+        lambda: (equip_tbl.removeRow(equip_tbl.currentRow()), _refresh_hardpoint_hint(), _refresh_equip_table_filter()) if equip_tbl.currentRow() >= 0 else None
     )
     equip_autofix_btn.clicked.connect(_autofix_invalid_hardpoints)
     cargo_add_btn.clicked.connect(lambda: _add_cargo_row("", 1))
-    cargo_del_btn.clicked.connect(lambda: cargo_tbl.removeRow(cargo_tbl.currentRow()) if cargo_tbl.currentRow() >= 0 else None)
+    cargo_del_btn.clicked.connect(
+        lambda: (cargo_tbl.removeRow(cargo_tbl.currentRow()), _refresh_cargo_table_filter()) if cargo_tbl.currentRow() >= 0 else None
+    )
+    equip_filter_edit.textChanged.connect(lambda _txt: _refresh_equip_table_filter())
+    cargo_filter_edit.textChanged.connect(lambda _txt: _refresh_cargo_table_filter())
+    houses_filter_edit.textChanged.connect(lambda _txt: _refresh_houses_table_filter())
     savegame_cb.currentIndexChanged.connect(
         lambda _idx: _load_selected() if not bool(state.get("updating_savegame_cb")) else None
     )
@@ -4921,8 +5228,11 @@ def open_savegame_editor(self):
     act_file_open.triggered.connect(_pick_file)
     act_file_reload.triggered.connect(_reload)
     act_file_save.triggered.connect(_save)
+    act_file_save_as.triggered.connect(_save_as)
+    act_file_restore_backup.triggered.connect(_restore_backup)
     act_file_close.triggered.connect(_request_close)
     act_settings_paths.triggered.connect(_open_path_settings)
+    act_view_center_current.triggered.connect(_center_current_system)
     act_help_quick.triggered.connect(
         lambda: QMessageBox.information(dlg, tr("savegame_editor.help.quick"), tr("savegame_editor.help.quick_text"))
     )
