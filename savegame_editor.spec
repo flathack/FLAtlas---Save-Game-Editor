@@ -4,12 +4,16 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+ICON_ICO = PROJECT_ROOT / "fl_editor" / "images" / "icon.ico"
+ICON_PNG = PROJECT_ROOT / "fl_editor" / "images" / "icon.png"
 
 datas = [
     (str(PROJECT_ROOT / "fl_editor" / "translations.json"), "fl_editor"),
     (str(PROJECT_ROOT / "fl_editor" / "images" / "icon.png"), "fl_editor/images"),
     (str(PROJECT_ROOT / "fl_editor" / "images" / "splash.png"), "fl_editor/images"),
 ]
+if ICON_ICO.exists():
+    datas.append((str(ICON_ICO), "fl_editor/images"))
 
 hiddenimports = [
     "pefile",
@@ -37,6 +41,7 @@ exe = EXE(
     a.datas,
     [],
     name="FLAtlas-Savegame-Editor",
+    icon=str(ICON_ICO if ICON_ICO.exists() else ICON_PNG if ICON_PNG.exists() else ""),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 
 from fl_editor.version import APP_VERSION
- # test
 
 def _python_has_pefile(python_exe: str) -> bool:
     try:

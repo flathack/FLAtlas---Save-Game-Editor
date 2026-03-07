@@ -5,104 +5,141 @@ Standalone editor for **Freelancer** singleplayer save files (`*.fl`).
 Developed by **Aldenmar Odin - flathack**.
 
 ## Version
-- Current: `v0.1.1`
+- Current: `v0.1.2`
 
 ## Core Features
-- Open and edit Freelancer savegames with `nickname - in-game name` display where available
-- Works with vanilla Freelancer and modded installs (all lookups are based on the configured game/mod files)
-- Safe save workflow with automatic backup: `YourSave.fl.FLAtlasBAK`
-- Savegame selector in the menu bar (shows filename + in-game save name/description)
-- Story-mission protection for risky fields (system/base locked during active story mission states)
+- Open and edit Freelancer savegames with `filename - in-game name` display
+- Works with vanilla Freelancer and modded installs
+- Fast startup with lazy loading of game data
+- `Open Recent` workflow for previously used savegames
+- `Save As...` support for branch saves and experiments
+- Safe save workflow with automatic backup history
+- Built-in backup restore dialog with backup list and diff preview
+- Story-save protection for risky `system` / `base` edits
 
 ## Editor Tabs
-- `Locked Gates`: view and edit locked jump gate/hole connections
-- `Visited`: view known travel network and unlock all JH/JG visit entries
-- `Reputation`: faction reputation table with template support (including neutral reset)
-- `Customize Trent`: editable Trent body parts (`com/body/head/left hand/right hand`)
-- `Ship`: ship, equipment and cargo editing with hardpoint-aware controls
+- `Visited`
+  - visited map comes first
+  - current player system is marked with a red dot
+  - `Mark all JH/JG as visited`
+  - `Reveal everything` for systems, visit-enabled objects, and visit-enabled zones
+- `Locked Gates`
+  - visualize and clear locked jump connections
+- `Reputation`
+  - faction reputation table
+  - template support
+  - cleanup and validation support
+- `Trent`
+  - editable Trent appearance parts
+- `Ship`
+  - ship archetype
+  - core equipment
+  - hardpoint-aware equipment editing
+  - cargo editing
+  - live filters for equipment, cargo, and faction tables
 
 ## Validation and Safety
-- `Check savegame` validates unknown/invalid entries (ship, equip, cargo, factions, system/base, visited)
-- Integrated hardpoint auto-fix during validation for invalid equip hardpoint assignments
-- Cleanup suggestions can be applied to loaded data before pressing `Save`
+- `Check savegame` validates:
+  - ships
+  - equipment
+  - cargo
+  - factions
+  - system/base
+  - visited entries
+- hardpoint auto-fix is available for invalid equipment assignments
+- save preview shows a compact list of pending changes before write
+- plain-text save writing preserves file formatting correctly
+- every save creates a new timestamped backup snapshot
 
-## UI / Theming
-- Built-in themes: `Standard`, `Light`, `Dark`, `High Contrast`, `Linux KDE`
-- Map rendering adapts to theme (including light map background for light themes)
-- Language menu (DE/EN)
+## Backup Workflow
+- Each save creates:
+  - latest alias: `YourSave.fl.FLAtlasBAK`
+  - history snapshot: `YourSave.fl.FLAtlasBAK.YYYYMMDD_HHMMSS`
+- `Restore Backup` opens a dialog with:
+  - left side: available backups
+  - right side: differences to the current save
+- restoring a backup preserves the current state as a new history snapshot first
 
-## Help Menu
-- Quick help dialog
-  - Includes compatibility note for vanilla FL and mods
-- Manual update check
-  - Returns explicit status messages (`up to date`, `check failed`, or `update available`)
-- Reset program config (deletes local config file after confirmation)
+## UI / UX
+- conventional menu structure:
+  - `File`
+  - `Edit`
+  - `View`
+  - `Tools`
+  - `Help`
+- refined `About` dialog using `icon.png`
+- improved update dialogs with clearer status states
+- hidden technical saves are excluded from picker lists:
+  - `Restart.fl`
+  - `AutoSave.fl`
+  - `AutoStart.fl`
+- DE/EN translations updated for current editor flows
 
 ## Requirements
 - Python 3.10+
 - PySide6
-- `pefile` (for IDS/in-game name resolution from Freelancer resource DLLs)
+- `pefile`
+- PyInstaller for packaged builds
 
 ## Start
 ```bash
 python start_savegame_editor.py
 ```
 
-The launcher can re-exec with a Python interpreter that has `pefile` available, so IDS/in-game name resolution continues to work.
+The launcher can re-exec with a Python interpreter that already has `pefile` available.
 
 ## Build
-This project ships with a complete PyInstaller build setup.
+This project includes a complete PyInstaller setup for Windows and Linux.
 
-Files:
+Relevant files:
 - `requirements-build.txt`
-- `savegame_editor.spec`
 - `build.py`
+- `savegame_editor.spec`
+- `build.bat`
 - `build.sh`
 
-### Quick Build (Linux)
+Install build dependencies:
 ```bash
-./build.sh onedir
-```
-
-or one-file package:
-```bash
-./build.sh onefile
-```
-
-### Manual Build
-```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
 python -m pip install -r requirements-build.txt
+```
+
+Build onedir package:
+```bash
 python build.py --clean --mode onedir
+```
+
+Build onefile package:
+```bash
+python build.py --clean --mode onefile
 ```
 
 Artifacts are written to:
 - `dist/`
 
-Release bundles currently provided:
-- Linux: `FLAtlas-Savegame-Editor-v0.1.1-linux-x86_64.tar.gz`
-- Windows: `FLAtlas-Savegame-Editor-v0.1.1-windows-onedir.zip`
+Included build assets:
+- `fl_editor/translations.json`
+- `fl_editor/images/icon.png`
+- `fl_editor/images/icon.ico`
+- `fl_editor/images/splash.png`
 
 ## Configuration
 Local config file:
-- `~/.config/fl_editor/config.json`
+- Windows: `%APPDATA%\\fl_editor\\config.json`
+- Linux: `~/.config/fl_editor/config.json`
 
 Relevant settings:
 - `settings.savegame_path`
 - `settings.savegame_game_path`
+- `settings.savegame_recent_files`
 - `settings.theme`
 - `settings.language`
 
-Set paths in-app via:
-- `Settings -> Path Settings`
-
 ## Notes
-- Savegame changes are written only when clicking `Save`.
-- Keep backups before large edits.
+- Savegame changes are written only when clicking `Save`
+- Story-related saves can still be sensitive; keep original backups for major edits
+- Backup history can grow over time; prune old snapshots manually if needed
 
 ## Links
 - Discord: https://discord.gg/RENtMMcc
-- Report bugs: https://github.com/flathack/FLAtlas---Save-Game-Editor/issues or on Discord
+- Report bugs: https://github.com/flathack/FLAtlas---Save-Game-Editor/issues
 - Releases: https://github.com/flathack/FLAtlas---Save-Game-Editor/releases

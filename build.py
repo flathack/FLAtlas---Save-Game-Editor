@@ -12,6 +12,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent
 ENTRYPOINT = PROJECT_ROOT / "start_savegame_editor.py"
 ICON_FILE = PROJECT_ROOT / "fl_editor" / "images" / "icon.png"
+ICON_ICO_FILE = PROJECT_ROOT / "fl_editor" / "images" / "icon.ico"
 
 
 def _detect_version() -> str:
@@ -27,6 +28,21 @@ def _ensure_clean_dirs() -> None:
         p = PROJECT_ROOT / name
         if p.exists():
             shutil.rmtree(p)
+
+
+def _build_data_args(sep: str) -> list[str]:
+    data_files = [
+        PROJECT_ROOT / "fl_editor" / "translations.json",
+        PROJECT_ROOT / "fl_editor" / "images" / "icon.png",
+        PROJECT_ROOT / "fl_editor" / "images" / "splash.png",
+    ]
+    if ICON_ICO_FILE.exists():
+        data_files.append(ICON_ICO_FILE)
+    args: list[str] = []
+    for path in data_files:
+        target = "fl_editor" if path.name == "translations.json" else "fl_editor/images"
+        args.extend(["--add-data", f"{path}{sep}{target}"])
+    return args
 
 
 def main() -> int:
@@ -65,18 +81,17 @@ def main() -> int:
         app_name,
         "--hidden-import",
         "pefile",
-        "--add-data",
-        f"{PROJECT_ROOT / 'fl_editor' / 'translations.json'}{sep}fl_editor",
-        "--add-data",
-        f"{PROJECT_ROOT / 'fl_editor' / 'images' / 'icon.png'}{sep}fl_editor/images",
-        "--add-data",
-        f"{PROJECT_ROOT / 'fl_editor' / 'images' / 'splash.png'}{sep}fl_editor/images",
         "--windowed",
     ]
-    if ICON_FILE.exists():
-        icon_suffix = ICON_FILE.suffix.lower()
-        if (not sys.platform.startswith("win")) or icon_suffix in {".ico", ".exe"}:
-            pyinstaller_cmd.extend(["--icon", str(ICON_FILE)])
+    pyinstaller_cmd.extend(_build_data_args(sep))
+    icon_for_exe: Path | None = None
+    if sys.platform.startswith("win"):
+        if ICON_ICO_FILE.exists():
+            icon_for_exe = ICON_ICO_FILE
+    elif ICON_FILE.exists():
+        icon_for_exe = ICON_FILE
+    if icon_for_exe is not None:
+        pyinstaller_cmd.extend(["--icon", str(icon_for_exe)])
     if args.mode == "onefile":
         pyinstaller_cmd.append("--onefile")
     else:
