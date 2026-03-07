@@ -1,0 +1,39 @@
+
+Description
+
+FLAtlas Savegame Editor is a standalone editor for Freelancer singleplayer saves. 
+It works with both vanilla Freelancer and modded installs by reading names, systems, 
+bases, items, and map data directly from the configured game files. You can edit money, 
+reputation, ship equipment, cargo, Trent appearance, visited systems, and locked jump 
+connections through a visual interface. The editor also includes validation tools, 
+hardpoint-aware equipment handling, recent save access, and map-based discovery tools. 
+
+Safety is a major focus: changes are only written when you save, risky story-related 
+system/base edits are blocked, and every save creates backup history so older states 
+can be restored later. A built-in restore dialog also lets you compare backups against 
+the current save before restoring. FLAtlas Savegame Editor is meant to make save editing 
+faster, safer, and more practical for both regular Freelancer players and mod users.
+
+FLAtlas Savegame Editor is a standalone save editor for Freelancer singleplayer save files. 
+It supports both vanilla Freelancer and modded installs by reading names, systems, bases, 
+items, and map data directly from the configured game files instead of relying on a fixed database.
+
+Main features:
+
+    Savegame loading and editing: Open Freelancer .fl save files and edit important player data through a visual interface.
+    Mod-aware data resolution: Uses the selected game or mod folder to resolve item names, systems, bases, factions, and map connections correctly.
+    Reputation editing: View and change faction reputation values, including template-based setup for quick adjustments.
+    Ship and equipment editing: Change ship setup, core equipment, mounted gear, and cargo with hardpoint-aware controls.
+    Trent appearance editing: Modify body, head, and hand components for Trent and communication models.
+    Visited map tools: View discovered systems and unlock visit states for jump gates, jump holes, systems, objects, and zones.
+    Locked gate tools: Inspect and remove locked jump gate or jump hole connections.
+    Validation and safety checks: Detect invalid ships, equipment, factions, visited entries, or system/base values before saving.
+    Backup history: Every save creates a new backup snapshot instead of overwriting a single backup file.
+    Backup restore dialog: Browse available backups and compare them against the current save before restoring.
+    Story-save protection: Risky system and base edits are blocked for story-related saves to help avoid crashes.
+    Save preview: Shows a compact summary of pending changes before writing the file.
+    Recent files and Save As: Quickly reopen recent saves or create alternate save branches safely.
+    Themes and translations: Includes multiple UI themes and DE/EN language support.
+    Standalone release build: Can be used as a packaged Windows application without opening the main FLAtlas toolchain.
+
+The editor is designed to make save editing faster, safer, and more practical for both regular Freelancer players and mod users.
