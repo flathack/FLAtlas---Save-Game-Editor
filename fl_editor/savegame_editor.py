@@ -23,6 +23,7 @@ from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QIcon, QPixmap, QActio
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -943,6 +944,9 @@ class _SavegameEditorHost(QMainWindow):
         return bytes(out)
 
     def _should_write_fls1(self, path: Path) -> bool:
+        preserve_encryption = bool(self._cfg.get("settings.savegame_preserve_encryption", True))
+        if not preserve_encryption:
+            return False
         try:
             if path.exists() and path.read_bytes().startswith(b"FLS1"):
                 return True
@@ -1155,6 +1159,8 @@ class _SavegameEditorHost(QMainWindow):
         n = str(nick or "").strip()
         if not n:
             return ""
+        if n.isdigit() and n.lower() not in self._faction_nick_to_label:
+            return f"ID {n}"
         return str(self._faction_nick_to_label.get(n.lower(), n) or n)
 
     def _faction_from_ui(self, label: str) -> str:
@@ -1495,6 +1501,35 @@ class _SavegameEditorHost(QMainWindow):
                     acc.setdefault(key, set()).add(nick)
         for k in out.keys():
             out[k] = sorted(acc.get(k, set()), key=str.lower)
+        return out
+
+    def _savegame_editor_collect_costumes(self, game_path: str) -> dict[str, dict[str, str]]:
+        out: dict[str, dict[str, str]] = {}
+        gp = str(game_path or "").strip()
+        if not gp:
+            return out
+        root = Path(gp)
+        if not root.exists():
+            return out
+        fp = ci_resolve(root, "DATA/CHARACTERS/costumes.ini")
+        if not fp or not fp.is_file():
+            return out
+        try:
+            sections = self._parser.parse(str(fp))
+        except Exception:
+            return out
+        for sec_name, entries in sections:
+            if str(sec_name or "").strip().lower() != "costume":
+                continue
+            nick = self._entry_get_value(entries, "nickname").strip()
+            if not nick:
+                continue
+            out[nick.lower()] = {
+                "head": self._entry_get_value(entries, "head").strip(),
+                "body": self._entry_get_value(entries, "body").strip(),
+                "lefthand": self._entry_get_value(entries, "lefthand").strip(),
+                "righthand": self._entry_get_value(entries, "righthand").strip(),
+            }
         return out
 
     def _savegame_editor_goods_source_by_equip_nick(self, root: Path) -> dict[str, str]:
@@ -1910,6 +1945,7 @@ def open_savegame_editor(self):
     templates: list[dict[str, object]] = []
     nickname_labels: dict[str, str] = {}
     numeric_id_map: dict[int, str] = {}
+    costume_map: dict[str, dict[str, str]] = {}
     system_label_by_nick: dict[str, str] = {}
     system_to_bases: dict[str, list[dict[str, str]]] = {}
     game_data_loaded_key = ""
@@ -1994,9 +2030,49 @@ def open_savegame_editor(self):
     info_lbl = QLabel("")
     info_lbl.setWordWrap(True)
     lay.addWidget(info_lbl)
+    compatibility_lbl = QLabel("")
+    compatibility_lbl.setWordWrap(True)
+    compatibility_lbl.setVisible(False)
+    compatibility_lbl.setStyleSheet("color: #d97706;")
+    lay.addWidget(compatibility_lbl)
+    encryption_lbl = QLabel("")
+    encryption_lbl.setWordWrap(True)
+    encryption_lbl.setVisible(False)
+    encryption_lbl.setStyleSheet("color: #9aa0a6;")
+    lay.addWidget(encryption_lbl)
     load_progress = QProgressBar(dlg)
     load_progress.setVisible(False)
     lay.addWidget(load_progress)
+    load_progress_state: dict[str, object] = {"current": 0.0, "target": 0.0, "phase": ""}
+    load_progress_timer = QTimer(dlg)
+    load_progress_timer.setInterval(16)
+
+    def _tick_loading_progress() -> None:
+        if not load_progress.isVisible():
+            load_progress_timer.stop()
+            return
+        cur = float(load_progress_state.get("current", 0.0) or 0.0)
+        target = float(load_progress_state.get("target", 0.0) or 0.0)
+        if target <= cur:
+            if int(round(cur)) >= 100:
+                load_progress_timer.stop()
+            return
+        # Ease-out step so large jumps still feel smooth while finishing quickly.
+        step = max(0.6, (target - cur) * 0.22)
+        cur = min(target, cur + step)
+        load_progress_state["current"] = cur
+        load_progress.setValue(max(0, min(100, int(round(cur)))))
+        if cur >= 100.0 and target >= 100.0:
+            load_progress_timer.stop()
+
+    def _refresh_loading_format() -> None:
+        phase = str(load_progress_state.get("phase", "") or "").strip()
+        if phase:
+            load_progress.setFormat(f"{tr('savegame_editor.loading')} - {phase} (%p%)")
+        else:
+            load_progress.setFormat(f"{tr('savegame_editor.loading')} (%p%)")
+
+    load_progress_timer.timeout.connect(_tick_loading_progress)
 
     content_row = QHBoxLayout()
     content_row.setContentsMargins(0, 0, 0, 0)
@@ -2226,6 +2302,11 @@ def open_savegame_editor(self):
     trent_form.addRow(tr("savegame_editor.trent.lh"), lh_cb)
     trent_form.addRow(tr("savegame_editor.trent.rh"), rh_cb)
     trent_l.addLayout(trent_form)
+    trent_lock_lbl = QLabel("", dlg)
+    trent_lock_lbl.setWordWrap(True)
+    trent_lock_lbl.setVisible(False)
+    trent_lock_lbl.setStyleSheet("color: #9aa0a6;")
+    trent_l.addWidget(trent_lock_lbl)
     trent_l.addStretch(1)
 
     ship_box = QGroupBox(tr("savegame_editor.ship_group"), dlg)
@@ -2236,6 +2317,14 @@ def open_savegame_editor(self):
     ship_archetype_cb = QComboBox(dlg)
     ship_archetype_cb.setEditable(True)
     ship_form.addRow(tr("savegame_editor.ship_archetype"), ship_archetype_cb)
+    ship_l.addLayout(ship_form)
+    ship_tabs = QTabWidget(dlg)
+
+    ship_core_tab = QWidget(dlg)
+    ship_core_l = QVBoxLayout(ship_core_tab)
+    ship_core_l.setContentsMargins(0, 0, 0, 0)
+    ship_core_l.setSpacing(6)
+    ship_core_form = QFormLayout()
     core_power_cb = QComboBox(dlg)
     core_engine_cb = QComboBox(dlg)
     core_scanner_cb = QComboBox(dlg)
@@ -2244,21 +2333,24 @@ def open_savegame_editor(self):
     for cb in core_component_cbs:
         cb.setEditable(True)
         cb.setProperty("fl_extra", "1")
-    ship_form.addRow("Power", core_power_cb)
-    ship_form.addRow("Engine", core_engine_cb)
-    ship_form.addRow("Scanner", core_scanner_cb)
-    ship_form.addRow("Tractor", core_tractor_cb)
-    ship_l.addLayout(ship_form)
+    ship_core_form.addRow("Power", core_power_cb)
+    ship_core_form.addRow("Engine", core_engine_cb)
+    ship_core_form.addRow("Scanner", core_scanner_cb)
+    ship_core_form.addRow("Tractor", core_tractor_cb)
+    ship_core_l.addLayout(ship_core_form)
     hardpoint_hint_lbl = QLabel("", dlg)
     hardpoint_hint_lbl.setWordWrap(True)
-    ship_l.addWidget(hardpoint_hint_lbl)
+    ship_core_l.addWidget(hardpoint_hint_lbl)
+    ship_core_l.addStretch(1)
 
-    equip_lbl = QLabel(tr("savegame_editor.equip"), dlg)
-    ship_l.addWidget(equip_lbl)
+    ship_equip_tab = QWidget(dlg)
+    ship_equip_l = QVBoxLayout(ship_equip_tab)
+    ship_equip_l.setContentsMargins(0, 0, 0, 0)
+    ship_equip_l.setSpacing(6)
     equip_filter_edit = QLineEdit(dlg)
     equip_filter_edit.setClearButtonEnabled(True)
     equip_filter_edit.setPlaceholderText(_tr_or("savegame_editor.filter_equip", "Filter equipment..."))
-    ship_l.addWidget(equip_filter_edit)
+    ship_equip_l.addWidget(equip_filter_edit)
     equip_tbl = QTableWidget(0, 2, dlg)
     equip_tbl.setHorizontalHeaderLabels([tr("savegame_editor.col.item"), tr("savegame_editor.col.hardpoint")])
     eh = equip_tbl.horizontalHeader()
@@ -2267,7 +2359,7 @@ def open_savegame_editor(self):
     equip_tbl.setSelectionBehavior(QAbstractItemView.SelectRows)
     equip_tbl.setSelectionMode(QAbstractItemView.SingleSelection)
     equip_tbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-    ship_l.addWidget(equip_tbl, 1)
+    ship_equip_l.addWidget(equip_tbl, 1)
     equip_btn_row = QHBoxLayout()
     equip_add_btn = QPushButton(tr("savegame_editor.btn.add_equip"), dlg)
     equip_del_btn = QPushButton(tr("savegame_editor.btn.remove_selected"), dlg)
@@ -2276,14 +2368,16 @@ def open_savegame_editor(self):
     equip_btn_row.addWidget(equip_del_btn)
     equip_btn_row.addWidget(equip_autofix_btn)
     equip_btn_row.addStretch(1)
-    ship_l.addLayout(equip_btn_row)
+    ship_equip_l.addLayout(equip_btn_row)
 
-    cargo_lbl = QLabel(tr("savegame_editor.cargo"), dlg)
-    ship_l.addWidget(cargo_lbl)
+    ship_cargo_tab = QWidget(dlg)
+    ship_cargo_l = QVBoxLayout(ship_cargo_tab)
+    ship_cargo_l.setContentsMargins(0, 0, 0, 0)
+    ship_cargo_l.setSpacing(6)
     cargo_filter_edit = QLineEdit(dlg)
     cargo_filter_edit.setClearButtonEnabled(True)
     cargo_filter_edit.setPlaceholderText(_tr_or("savegame_editor.filter_cargo", "Filter cargo..."))
-    ship_l.addWidget(cargo_filter_edit)
+    ship_cargo_l.addWidget(cargo_filter_edit)
     fixed_cargo_row = QWidget(dlg)
     fixed_cargo_l = QHBoxLayout(fixed_cargo_row)
     fixed_cargo_l.setContentsMargins(0, 0, 0, 0)
@@ -2302,7 +2396,7 @@ def open_savegame_editor(self):
     fixed_cargo_l.addWidget(fixed_repair_lbl)
     fixed_cargo_l.addWidget(fixed_repair_spin)
     fixed_cargo_l.addStretch(1)
-    ship_l.addWidget(fixed_cargo_row)
+    ship_cargo_l.addWidget(fixed_cargo_row)
     cargo_tbl = QTableWidget(0, 2, dlg)
     cargo_tbl.setHorizontalHeaderLabels([tr("savegame_editor.col.item"), tr("savegame_editor.col.amount")])
     ch = cargo_tbl.horizontalHeader()
@@ -2311,14 +2405,18 @@ def open_savegame_editor(self):
     cargo_tbl.setSelectionBehavior(QAbstractItemView.SelectRows)
     cargo_tbl.setSelectionMode(QAbstractItemView.SingleSelection)
     cargo_tbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-    ship_l.addWidget(cargo_tbl, 1)
+    ship_cargo_l.addWidget(cargo_tbl, 1)
     cargo_btn_row = QHBoxLayout()
     cargo_add_btn = QPushButton(tr("savegame_editor.btn.add_cargo"), dlg)
     cargo_del_btn = QPushButton(tr("savegame_editor.btn.remove_selected"), dlg)
     cargo_btn_row.addWidget(cargo_add_btn)
     cargo_btn_row.addWidget(cargo_del_btn)
     cargo_btn_row.addStretch(1)
-    ship_l.addLayout(cargo_btn_row)
+    ship_cargo_l.addLayout(cargo_btn_row)
+    ship_tabs.addTab(ship_core_tab, _tr_or("savegame_editor.ship_subtab.core", "Core Components"))
+    ship_tabs.addTab(ship_equip_tab, _tr_or("savegame_editor.ship_subtab.equip", "Equip Entries"))
+    ship_tabs.addTab(ship_cargo_tab, _tr_or("savegame_editor.ship_subtab.cargo", "Cargo Entries"))
+    ship_l.addWidget(ship_tabs, 1)
     ship_tab_l.addWidget(ship_box, 1)
 
     houses_lbl = QLabel(tr("savegame_editor.houses"))
@@ -2368,6 +2466,10 @@ def open_savegame_editor(self):
         "locked_ids": set(),
         "visit_ids": set(),
         "visit_line_by_id": {},
+        "original_player_values": {},
+        "compatibility_issues": [],
+        "trent_costume_locked": False,
+        "encrypted_input": False,
         "story_locked": False,
         "bulk_loading": False,
         "last_ship_nick": "",
@@ -2443,8 +2545,12 @@ def open_savegame_editor(self):
         state["locked_ids"] = set()
         state["visit_ids"] = set()
         state["visit_line_by_id"] = {}
+        state["original_player_values"] = {}
         state["last_ship_nick"] = ""
         state["baseline_signature"] = None
+        state["compatibility_issues"] = []
+        state["trent_costume_locked"] = False
+        state["encrypted_input"] = False
         rank_spin.setValue(0)
         money_spin.setValue(0)
         description_edit.clear()
@@ -2469,6 +2575,13 @@ def open_savegame_editor(self):
         houses_tbl.setRowCount(0)
         _refresh_all_table_filters()
         _set_story_lock_ui(False, 0)
+        _set_trent_costume_lock(False)
+        compatibility_lbl.setText("")
+        compatibility_lbl.setToolTip("")
+        compatibility_lbl.setVisible(False)
+        encryption_lbl.setText("")
+        encryption_lbl.setToolTip("")
+        encryption_lbl.setVisible(False)
         _clear_maps()
         for w in (
             rank_spin,
@@ -2564,17 +2677,40 @@ def open_savegame_editor(self):
         if active:
             load_progress.setRange(0, 100)
             load_progress.setValue(0)
-            load_progress.setFormat(f"{tr('savegame_editor.loading')} (%p%)")
+            load_progress_state["current"] = 0.0
+            load_progress_state["target"] = 0.0
+            load_progress_state["phase"] = ""
+            _refresh_loading_format()
+            load_progress_timer.start()
         else:
+            load_progress_timer.stop()
+            load_progress_state["current"] = 0.0
+            load_progress_state["target"] = 0.0
+            load_progress_state["phase"] = ""
             load_progress.setRange(0, 1)
             load_progress.setValue(0)
         QApplication.processEvents()
 
-    def _set_loading_progress(value: int) -> None:
+    def _set_loading_progress(value: int, phase: str = "") -> None:
         if not load_progress.isVisible():
             return
         load_progress.setRange(0, 100)
-        load_progress.setValue(max(0, min(100, int(value))))
+        clamped = max(0, min(100, int(value)))
+        load_progress_state["phase"] = str(phase or "").strip()
+        _refresh_loading_format()
+        load_progress_state["target"] = float(clamped)
+        current = float(load_progress_state.get("current", 0.0) or 0.0)
+        # Keep the first visible updates snappy so the bar does not appear stuck at 1%.
+        if clamped > 0 and current < 6.0:
+            current = min(float(clamped), max(4.0, float(clamped)))
+            load_progress_state["current"] = current
+            load_progress.setValue(max(0, min(100, int(round(current)))))
+        elif (clamped - current) >= 12.0:
+            current = max(current, float(clamped) - 6.0)
+            load_progress_state["current"] = current
+            load_progress.setValue(max(0, min(100, int(round(current)))))
+        if not load_progress_timer.isActive():
+            load_progress_timer.start()
         QApplication.processEvents()
 
     def _save_dirs() -> list[Path]:
@@ -2603,6 +2739,319 @@ def open_savegame_editor(self):
                 if mapped2:
                     return mapped2
         return raw
+
+    def _is_raw_numeric_id(token: str) -> bool:
+        return bool(str(token or "").strip()) and str(token or "").strip().isdigit()
+
+    def _numeric_id_ui_label(token: str) -> str:
+        raw = str(token or "").strip()
+        if not raw:
+            return ""
+        return f"ID {raw}" if raw.isdigit() else raw
+
+    def _is_tolerated_unknown_item_token(token: str) -> bool:
+        raw = str(token or "").strip()
+        if not raw:
+            return False
+        resolved = _token_to_known_nick(raw)
+        return _is_raw_numeric_id(raw) and _is_raw_numeric_id(resolved)
+
+    def _is_tolerated_unknown_faction_token(token: str) -> bool:
+        raw = str(token or "").strip()
+        if not raw:
+            return False
+        fac = self._faction_from_ui(raw) or raw
+        return _is_raw_numeric_id(raw) and _is_raw_numeric_id(fac)
+
+    def _known_item_nicks() -> set[str]:
+        out: set[str] = set()
+        for seq in (equip_nicks, ship_nicks):
+            for val in list(seq or []):
+                txt = str(val or "").strip().lower()
+                if txt:
+                    out.add(txt)
+        for key in dict(item_name_map or {}).keys():
+            txt = str(key or "").strip().lower()
+            if txt:
+                out.add(txt)
+        return out
+
+    def _is_incompatible_item_token(token: str) -> bool:
+        raw = str(token or "").strip()
+        if not raw:
+            return False
+        resolved = _token_to_known_nick(raw).strip() or raw
+        if _is_raw_numeric_id(resolved):
+            return True
+        return resolved.lower() not in _known_item_nicks()
+
+    def _is_incompatible_faction_token(token: str) -> bool:
+        raw = str(token or "").strip()
+        if not raw:
+            return False
+        fac = (self._faction_from_ui(raw) or raw).strip()
+        if _is_raw_numeric_id(fac):
+            return True
+        return fac.lower() not in {str(v).strip().lower() for v in self._cached_factions if str(v).strip()}
+
+    def _is_incompatible_system_token(token: str) -> bool:
+        raw = str(token or "").strip()
+        if not raw:
+            return False
+        return raw.upper() not in {str(v).strip().upper() for v in system_to_bases.keys() if str(v).strip()}
+
+    def _is_incompatible_base_token(token: str) -> bool:
+        raw = str(token or "").strip()
+        if not raw:
+            return False
+        return raw.upper() not in {
+            str(row.get("nickname", "")).strip().upper()
+            for rows in system_to_bases.values()
+            for row in list(rows or [])
+            if str(row.get("nickname", "")).strip()
+        }
+
+    def _set_widget_compat_locked(widget: QWidget, locked: bool, tooltip: str = "") -> None:
+        widget.setProperty("fl_compat_locked", bool(locked))
+        widget.setToolTip(tooltip or "")
+        if widget is not system_cb and widget is not base_cb:
+            widget.setEnabled(not locked)
+
+    def _refresh_location_lock_state() -> None:
+        story_locked = bool(state.get("story_locked", False))
+        system_cb.setEnabled((not story_locked) and (not bool(system_cb.property("fl_compat_locked"))))
+        base_cb.setEnabled((not story_locked) and (not bool(base_cb.property("fl_compat_locked"))))
+
+    def _refresh_encryption_notice() -> None:
+        if not isinstance(state.get("path"), Path):
+            encryption_lbl.setText("")
+            encryption_lbl.setToolTip("")
+            encryption_lbl.setVisible(False)
+            return
+        encrypted_input = bool(state.get("encrypted_input", False))
+        preserve = bool(self._cfg.get("settings.savegame_preserve_encryption", True))
+        if encrypted_input:
+            if preserve:
+                txt = _tr_or(
+                    "savegame_editor.encryption_notice_preserved",
+                    "This savegame is encrypted and will be saved encrypted again.",
+                )
+            else:
+                txt = _tr_or(
+                    "savegame_editor.encryption_notice_disabled",
+                    "This savegame is encrypted, but saving encrypted again is currently disabled in settings.",
+                )
+        else:
+            txt = _tr_or(
+                "savegame_editor.encryption_notice_plain",
+                "This savegame is not encrypted.",
+            )
+        encryption_lbl.setText(txt)
+        encryption_lbl.setVisible(True)
+
+    def _set_trent_costume_lock(active: bool) -> None:
+        locked = bool(active)
+        state["trent_costume_locked"] = locked
+        for cb in trent_item_cbs:
+            if bool(cb.property("fl_compat_locked")):
+                continue
+            cb.setEnabled(not locked)
+        if locked:
+            trent_lock_lbl.setText(
+                _tr_or(
+                    "savegame_editor.trent_costume_locked",
+                    "This save uses costume/com_costume entries. Trent customization is disabled so those original keys stay unchanged.",
+                )
+            )
+            trent_lock_lbl.setVisible(True)
+        else:
+            trent_lock_lbl.setText("")
+            trent_lock_lbl.setVisible(False)
+
+    def _apply_compatibility_locks() -> None:
+        issues: list[str] = []
+
+        def _lock_item_combo(cb: QComboBox, label: str) -> None:
+            token = _combo_item_nick(cb).strip()
+            bad = _is_incompatible_item_token(token)
+            tip = _tr_or(
+                "savegame_editor.compat.tooltip.item",
+                "This entry is not compatible with the current game data and is read-only.",
+            ) if bad else ""
+            _set_widget_compat_locked(cb, bad, tip)
+            if bad:
+                issues.append(f"{label}: {_item_ui_label(token) or token}")
+
+        rep_bad = _is_incompatible_faction_token(_current_rep_group_nick())
+        _set_widget_compat_locked(
+            rep_group_cb,
+            rep_bad,
+            _tr_or("savegame_editor.compat.tooltip.faction", "This faction entry is not compatible with the current game data and is read-only.") if rep_bad else "",
+        )
+        if rep_bad:
+            issues.append(f"{tr('savegame_editor.rep_group')}: {_current_rep_group_nick()}")
+
+        sys_bad = _is_incompatible_system_token(_current_system_nick())
+        _set_widget_compat_locked(
+            system_cb,
+            sys_bad,
+            _tr_or("savegame_editor.compat.tooltip.system", "This system entry is not compatible with the current game data and is read-only.") if sys_bad else "",
+        )
+        if sys_bad:
+            issues.append(f"{tr('savegame_editor.system')}: {_current_system_nick()}")
+
+        base_bad = _is_incompatible_base_token(_current_base_nick())
+        _set_widget_compat_locked(
+            base_cb,
+            base_bad,
+            _tr_or("savegame_editor.compat.tooltip.base", "This base entry is not compatible with the current game data and is read-only.") if base_bad else "",
+        )
+        if base_bad:
+            issues.append(f"{tr('savegame_editor.base')}: {_current_base_nick()}")
+
+        _lock_item_combo(ship_archetype_cb, tr("savegame_editor.ship_archetype"))
+        for cb, label in (
+            (com_body_cb, "Com Body"),
+            (com_head_cb, "Com Head"),
+            (com_lh_cb, "Com Left Hand"),
+            (com_rh_cb, "Com Right Hand"),
+            (body_cb, "Body"),
+            (head_cb, "Head"),
+            (lh_cb, "Left Hand"),
+            (rh_cb, "Right Hand"),
+            (core_power_cb, "Power"),
+            (core_engine_cb, "Engine"),
+            (core_scanner_cb, "Scanner"),
+            (core_tractor_cb, "Tractor"),
+        ):
+            _lock_item_combo(cb, label)
+
+        for row in range(equip_tbl.rowCount()):
+            item_cb = equip_tbl.cellWidget(row, 0)
+            hp_cb = equip_tbl.cellWidget(row, 1)
+            if not isinstance(item_cb, QComboBox):
+                continue
+            token = _combo_item_nick(item_cb).strip()
+            bad = _is_incompatible_item_token(token)
+            tip = _tr_or(
+                "savegame_editor.compat.tooltip.item_row",
+                "This equipment entry is not compatible with the current game data and is read-only.",
+            ) if bad else ""
+            _set_widget_compat_locked(item_cb, bad, tip)
+            if isinstance(hp_cb, QWidget):
+                _set_widget_compat_locked(hp_cb, bad, tip)
+            if bad:
+                issues.append(f"Equip: {_item_ui_label(token) or token}")
+
+        for row in range(cargo_tbl.rowCount()):
+            item_cb = cargo_tbl.cellWidget(row, 0)
+            amt_spin = cargo_tbl.cellWidget(row, 1)
+            if not isinstance(item_cb, QComboBox):
+                continue
+            token = _combo_item_nick(item_cb).strip()
+            bad = _is_incompatible_item_token(token)
+            tip = _tr_or(
+                "savegame_editor.compat.tooltip.cargo_row",
+                "This cargo entry is not compatible with the current game data and is read-only.",
+            ) if bad else ""
+            _set_widget_compat_locked(item_cb, bad, tip)
+            if isinstance(amt_spin, QWidget):
+                _set_widget_compat_locked(amt_spin, bad, tip)
+            if bad:
+                issues.append(f"Cargo: {_item_ui_label(token) or token}")
+
+        for row in range(houses_tbl.rowCount()):
+            fac_item = houses_tbl.item(row, 0)
+            fac = str(fac_item.data(Qt.UserRole) if fac_item else "").strip()
+            bad = _is_incompatible_faction_token(fac)
+            tip = _tr_or(
+                "savegame_editor.compat.tooltip.house_row",
+                "This faction entry is not compatible with the current game data and is read-only.",
+            ) if bad else ""
+            rep_spin = houses_tbl.cellWidget(row, 1)
+            rep_slider = houses_tbl.cellWidget(row, 2)
+            if isinstance(rep_spin, QWidget):
+                _set_widget_compat_locked(rep_spin, bad, tip)
+            if isinstance(rep_slider, QWidget):
+                _set_widget_compat_locked(rep_slider, bad, tip)
+            if fac_item is not None:
+                fac_item.setToolTip(tip)
+            if bad:
+                issues.append(f"{tr('savegame_editor.houses')}: {fac}")
+
+        unresolved_visit_ids = 0
+        for vid in set(state.get("visit_ids", set()) or set()):
+            try:
+                iv = int(vid)
+            except Exception:
+                continue
+            mapped = str(hash_to_nick.get(iv, "") or numeric_id_map.get(iv, "") or "").strip()
+            if not mapped:
+                unresolved_visit_ids += 1
+        if unresolved_visit_ids > 0:
+            issues.append(
+                _tr_or(
+                    "savegame_editor.compat.issue.visits",
+                    "Visited map contains {count} unknown IDs.",
+                ).format(count=unresolved_visit_ids)
+            )
+
+        _refresh_location_lock_state()
+        state["compatibility_issues"] = list(issues)
+        if issues:
+            shown = "\n".join(f"- {row}" for row in issues[:12])
+            extra = len(issues) - min(len(issues), 12)
+            if extra > 0:
+                shown += f"\n- +{extra} more"
+            compatibility_lbl.setText(
+                _tr_or(
+                    "savegame_editor.compat.summary",
+                    "Compatibility warning: {count} entries could not be resolved against the current game data. They are shown but locked.",
+                ).format(count=len(issues))
+            )
+            compatibility_lbl.setToolTip(shown)
+            compatibility_lbl.setVisible(True)
+        else:
+            compatibility_lbl.setText("")
+            compatibility_lbl.setToolTip("")
+            compatibility_lbl.setVisible(False)
+
+    def _remove_selected_equip_row() -> None:
+        row = equip_tbl.currentRow()
+        if row < 0:
+            return
+        item_cb = equip_tbl.cellWidget(row, 0)
+        if isinstance(item_cb, QWidget) and bool(item_cb.property("fl_compat_locked")):
+            QMessageBox.information(
+                dlg,
+                tr("savegame_editor.title"),
+                _tr_or(
+                    "savegame_editor.compat.cannot_remove",
+                    "This incompatible entry is locked and cannot be edited or removed.",
+                ),
+            )
+            return
+        equip_tbl.removeRow(row)
+        _refresh_hardpoint_hint()
+        _refresh_equip_table_filter()
+
+    def _remove_selected_cargo_row() -> None:
+        row = cargo_tbl.currentRow()
+        if row < 0:
+            return
+        item_cb = cargo_tbl.cellWidget(row, 0)
+        if isinstance(item_cb, QWidget) and bool(item_cb.property("fl_compat_locked")):
+            QMessageBox.information(
+                dlg,
+                tr("savegame_editor.title"),
+                _tr_or(
+                    "savegame_editor.compat.cannot_remove",
+                    "This incompatible entry is locked and cannot be edited or removed.",
+                ),
+            )
+            return
+        cargo_tbl.removeRow(row)
+        _refresh_cargo_table_filter()
 
     def _validate_savegame() -> None:
         cur = state.get("path")
@@ -2657,30 +3106,30 @@ def open_savegame_editor(self):
             v = val.strip()
             if k == "ship_archetype":
                 nick = _token_to_known_nick(v).strip()
-                if nick and nick.lower() not in known_ships:
+                if nick and nick.lower() not in known_ships and not _is_tolerated_unknown_item_token(v):
                     bad_ships.add(v.strip())
             elif k == "equip":
                 parts = [x.strip() for x in v.split(",")]
                 item_tok = parts[0] if parts else ""
                 nick = _token_to_known_nick(item_tok).strip()
-                if nick and nick.lower() not in known_equip:
+                if nick and nick.lower() not in known_equip and not _is_tolerated_unknown_item_token(item_tok):
                     bad_equip.add(item_tok)
             elif k == "cargo":
                 parts = [x.strip() for x in v.split(",")]
                 item_tok = parts[0] if parts else ""
                 nick = _token_to_known_nick(item_tok).strip()
-                if nick and nick.lower() not in known_equip:
+                if nick and nick.lower() not in known_equip and not _is_tolerated_unknown_item_token(item_tok):
                     bad_cargo.add(item_tok)
             elif k == "rep_group":
                 fac = str(v or "").strip()
                 fac_nick = self._faction_from_ui(fac) or fac
-                if fac_nick and fac_nick.lower() not in known_factions:
+                if fac_nick and fac_nick.lower() not in known_factions and not _is_tolerated_unknown_faction_token(fac):
                     bad_factions.add(fac)
             elif k == "house":
                 parts = [x.strip() for x in v.split(",", 1)]
                 if len(parts) >= 2:
                     fac = str(parts[1] or "").strip()
-                    if fac and fac.lower() not in known_factions:
+                    if fac and fac.lower() not in known_factions and not _is_tolerated_unknown_faction_token(fac):
                         bad_factions.add(fac)
             elif k == "visit":
                 parts = [x.strip() for x in v.split(",", 1)]
@@ -2712,14 +3161,14 @@ def open_savegame_editor(self):
                     bad_bases.add(v.strip())
 
         current_ship = _combo_item_nick(ship_archetype_cb)
-        bad_ship_ui = bool(current_ship and current_ship.lower() not in known_ships)
+        bad_ship_ui = bool(current_ship and current_ship.lower() not in known_ships and not _is_tolerated_unknown_item_token(current_ship))
         bad_equip_rows: list[int] = []
         for r in range(equip_tbl.rowCount()):
             item_cb = equip_tbl.cellWidget(r, 0)
             if not isinstance(item_cb, QComboBox):
                 continue
             nick = _combo_item_nick(item_cb).strip()
-            if nick and nick.lower() not in known_equip:
+            if nick and nick.lower() not in known_equip and not _is_tolerated_unknown_item_token(nick):
                 bad_equip_rows.append(r)
         bad_cargo_rows: list[int] = []
         for r in range(cargo_tbl.rowCount()):
@@ -2727,17 +3176,17 @@ def open_savegame_editor(self):
             if not isinstance(item_cb, QComboBox):
                 continue
             nick = _combo_item_nick(item_cb).strip()
-            if nick and nick.lower() not in known_equip:
+            if nick and nick.lower() not in known_equip and not _is_tolerated_unknown_item_token(nick):
                 bad_cargo_rows.append(r)
         bad_rep_group_ui = False
         current_rep = _current_rep_group_nick()
-        if current_rep and current_rep.lower() not in known_factions:
+        if current_rep and current_rep.lower() not in known_factions and not _is_tolerated_unknown_faction_token(current_rep):
             bad_rep_group_ui = True
         bad_house_rows: list[int] = []
         for r in range(houses_tbl.rowCount()):
             it = houses_tbl.item(r, 0)
             fac = str(it.data(Qt.UserRole) if it else "").strip()
-            if fac and fac.lower() not in known_factions:
+            if fac and fac.lower() not in known_factions and not _is_tolerated_unknown_faction_token(fac):
                 bad_house_rows.append(r)
         current_system_ui = _current_system_nick()
         bad_system_ui = bool(current_system_ui and current_system_ui.upper() not in known_systems)
@@ -2862,6 +3311,8 @@ def open_savegame_editor(self):
         raw = _resolve_item_nick(str(nick or "").strip())
         if not raw:
             return ""
+        raw_numeric = raw if raw.isdigit() else ""
+        mapped_numeric = ""
         if raw.isdigit():
             try:
                 mapped = str(numeric_id_map.get(int(raw), "") or "").strip()
@@ -2869,11 +3320,18 @@ def open_savegame_editor(self):
                 mapped = ""
             if mapped:
                 raw = mapped
+                mapped_numeric = raw_numeric
         disp = str(item_name_map.get(raw.lower(), "") or "").strip()
         if not disp:
             fac_disp = str(nickname_labels.get(raw.lower(), "") or "").strip()
             if " - " in fac_disp:
                 disp = fac_disp.split(" - ", 1)[1].strip()
+        if raw_numeric and mapped_numeric:
+            if disp and disp.lower() != raw.lower():
+                return f"{_numeric_id_ui_label(raw_numeric)} - {raw} - {disp}"
+            return f"{_numeric_id_ui_label(raw_numeric)} - {raw}"
+        if raw_numeric:
+            return _numeric_id_ui_label(raw_numeric)
         if disp and disp.lower() != raw.lower():
             return f"{raw} - {disp}"
         return raw
@@ -2905,9 +3363,13 @@ def open_savegame_editor(self):
         idx = cb.findData(val)
         if idx >= 0:
             cb.setCurrentIndex(idx)
+            if not str(cb.currentText() or "").strip():
+                cb.setEditText(_item_ui_label(val))
             return
         cb.addItem(_item_ui_label(val), val)
         cb.setCurrentIndex(cb.count() - 1)
+        if not str(cb.currentText() or "").strip():
+            cb.setEditText(_item_ui_label(val))
 
     def _combo_item_nick(cb: QComboBox) -> str:
         data = str(cb.currentData() or "").strip()
@@ -3063,7 +3525,7 @@ def open_savegame_editor(self):
                 if good_nick:
                     cands.append(f"{good_nick}_package")
                 cands.append(f"{ship_nick}_package")
-        keep_hp_prefixes = ("hplight", "hprunninglight", "hpfx", "hpcontrail")
+        keep_hp_prefixes = ("hplight", "hprunninglight", "hpfx", "hpcontrail", "hpheadlight", "hpdocklight")
         keep_types = {"light", "attachedfx", "internalfx", "contrail", "engine"}
         for ship_key, cands in ship_to_package_candidates.items():
             seen_pack: set[str] = set()
@@ -3075,8 +3537,7 @@ def open_savegame_editor(self):
                 seen_pack.add(pk)
                 rows = list(package_rows.get(pk, []) or [])
                 if rows:
-                    selected_rows = rows
-                    break
+                    selected_rows.extend(rows)
             if not selected_rows:
                 continue
             lights: list[tuple[str, str, str]] = []
@@ -3105,7 +3566,7 @@ def open_savegame_editor(self):
 
     def _is_ship_light_row(item_nick: str, hardpoint: str) -> bool:
         hp_l = str(hardpoint or "").strip().lower()
-        keep_hp_prefixes = ("hplight", "hprunninglight", "hpfx", "hpcontrail")
+        keep_hp_prefixes = ("hplight", "hprunninglight", "hpfx", "hpcontrail", "hpheadlight", "hpdocklight")
         keep_types = {"light", "attachedfx", "internalfx", "contrail", "engine"}
         if hp_l.startswith(keep_hp_prefixes):
             return True
@@ -3139,7 +3600,7 @@ def open_savegame_editor(self):
                 if not hp:
                     continue
                 hp_l = hp.lower()
-                if ship_hps and hp_l not in ship_hps and (not hp_l.startswith(("hplight", "hprunninglight", "hpfx", "hpcontrail"))):
+                if ship_hps and hp_l not in ship_hps and (not hp_l.startswith(("hplight", "hprunninglight", "hpfx", "hpcontrail", "hpheadlight", "hpdocklight"))):
                     continue
                 pair = (str(item_n).strip().lower(), hp_l)
                 if pair in existing:
@@ -3294,13 +3755,17 @@ def open_savegame_editor(self):
         else:
             spin.setStyleSheet("")
 
-    def _insert_house_row(faction: str, rep: float) -> None:
+    def _insert_house_row(faction: str, rep: float, raw_line: str = "") -> None:
         row = houses_tbl.rowCount()
         houses_tbl.insertRow(row)
         faction_nick = str(faction or "").strip()
-        faction_label = faction_labels.get(faction_nick.lower(), self._faction_ui_label(faction_nick) or faction_nick)
+        faction_label = faction_labels.get(
+            faction_nick.lower(),
+            _numeric_id_ui_label(faction_nick) if _is_raw_numeric_id(faction_nick) else (self._faction_ui_label(faction_nick) or faction_nick),
+        )
         fac_item = QTableWidgetItem(faction_label)
         fac_item.setData(Qt.UserRole, faction_nick)
+        fac_item.setData(Qt.UserRole + 1, str(raw_line or "").strip())
         fac_item.setFlags((fac_item.flags() | Qt.ItemIsSelectable | Qt.ItemIsEnabled) & ~Qt.ItemIsEditable)
         houses_tbl.setItem(row, 0, fac_item)
 
@@ -3309,6 +3774,7 @@ def open_savegame_editor(self):
         rep_spin.setRange(-1.0, 1.0)
         rep_spin.setSingleStep(0.01)
         rep_spin.setValue(float(rep))
+        rep_spin.setProperty("fl_raw_line", str(raw_line or "").strip())
         _update_rep_color(rep_spin, float(rep))
         houses_tbl.setCellWidget(row, 1, rep_spin)
 
@@ -3317,6 +3783,7 @@ def open_savegame_editor(self):
         rep_slider.setSingleStep(1)
         rep_slider.setPageStep(5)
         rep_slider.setValue(int(round(float(rep) * 100.0)))
+        rep_slider.setProperty("fl_raw_line", str(raw_line or "").strip())
         houses_tbl.setCellWidget(row, 2, rep_slider)
 
         sync = {"busy": False}
@@ -3342,10 +3809,10 @@ def open_savegame_editor(self):
         rep_slider.valueChanged.connect(_from_slider)
         rep_spin.valueChanged.connect(lambda _v: _refresh_houses_table_filter())
 
-    def _set_houses(rows: list[tuple[str, float]]) -> None:
+    def _set_houses(rows: list[tuple[str, float, str]]) -> None:
         houses_tbl.setRowCount(0)
-        for faction, rep in rows:
-            _insert_house_row(faction, rep)
+        for faction, rep, raw_line in rows:
+            _insert_house_row(faction, rep, raw_line)
         _refresh_houses_table_filter()
 
     def _locked_gate_ids_from_lines(lines: list[str]) -> set[int]:
@@ -3601,12 +4068,13 @@ def open_savegame_editor(self):
         ship_hp_opts = _ship_hardpoints(_current_ship_nick())
         cur_item = _combo_item_nick(item_cb)
         cur_hp = _hardpoint_from_widget(hp_cb)
+        keep_hp_prefixes = ("hplight", "hprunninglight", "hpfx", "hpcontrail", "hpheadlight", "hpdocklight")
         hp_cb.blockSignals(True)
         hp_cb.clear()
         hp_cb.addItem("", "")
         for hp in ship_hp_opts:
             hp_cb.addItem(hp, hp)
-        _set_hardpoint_combo_value(hp_cb, cur_hp, add_missing=False)
+        _set_hardpoint_combo_value(hp_cb, cur_hp, add_missing=bool(str(cur_hp or "").strip().lower().startswith(keep_hp_prefixes)))
         hp_cb.blockSignals(False)
         selected_hp = _hardpoint_from_widget(hp_cb)
         opts = _compatible_equip_nicks_for_hardpoint(selected_hp)
@@ -3661,16 +4129,18 @@ def open_savegame_editor(self):
             _refresh_equip_row_filters(row)
             _refresh_hardpoint_hint()
 
-    def _add_equip_row(item_nick: str = "", hardpoint: str = "", extra: str = "", *, defer_refresh: bool = False) -> None:
+    def _add_equip_row(item_nick: str = "", hardpoint: str = "", extra: str = "", *, defer_refresh: bool = False, raw_line: str = "") -> None:
         row = equip_tbl.rowCount()
         equip_tbl.insertRow(row)
         item_cb = QComboBox(dlg)
         _setup_item_combo(item_cb, equip_nicks)
         item_cb.setProperty("fl_extra", str(extra or "").strip())
         item_cb.setProperty("fl_force_empty", (not str(item_nick or "").strip()))
+        item_cb.setProperty("fl_raw_line", str(raw_line or "").strip())
         equip_tbl.setCellWidget(row, 0, item_cb)
         hp_cb = QComboBox(dlg)
         hp_cb.setEditable(False)
+        hp_cb.setProperty("fl_raw_line", str(raw_line or "").strip())
         hp_cb.addItem("", "")
         for hp in _ship_hardpoints(_current_ship_nick()):
             hp_cb.addItem(hp, hp)
@@ -3695,17 +4165,19 @@ def open_savegame_editor(self):
             _refresh_hardpoint_hint()
         _refresh_equip_table_filter()
 
-    def _add_cargo_row(item_nick: str = "", amount: int = 1, extra: str = ", , 0") -> None:
+    def _add_cargo_row(item_nick: str = "", amount: int = 1, extra: str = ", , 0", *, raw_line: str = "") -> None:
         row = cargo_tbl.rowCount()
         cargo_tbl.insertRow(row)
         item_cb = QComboBox(dlg)
         _setup_item_combo(item_cb, equip_nicks)
         _set_item_combo_value(item_cb, item_nick)
         item_cb.setProperty("fl_extra", str(extra or "").strip())
+        item_cb.setProperty("fl_raw_line", str(raw_line or "").strip())
         cargo_tbl.setCellWidget(row, 0, item_cb)
         amt_spin = QSpinBox(dlg)
         amt_spin.setRange(0, 1_000_000)
         amt_spin.setValue(max(0, int(amount)))
+        amt_spin.setProperty("fl_raw_line", str(raw_line or "").strip())
         cargo_tbl.setCellWidget(row, 1, amt_spin)
         item_cb.currentIndexChanged.connect(lambda _idx: _refresh_cargo_table_filter())
         item_cb.currentTextChanged.connect(lambda _txt: _refresh_cargo_table_filter())
@@ -3825,7 +4297,7 @@ def open_savegame_editor(self):
         if not allowed:
             return []
         invalid_rows: list[tuple[str, str]] = []
-        keep_hp_prefixes = ("hplight", "hprunninglight", "hpfx", "hpcontrail")
+        keep_hp_prefixes = ("hplight", "hprunninglight", "hpfx", "hpcontrail", "hpheadlight", "hpdocklight")
         keep_types = {"light", "attachedfx", "internalfx", "contrail", "engine"}
         for item_nick, hardpoint, _extra in rows:
             hp = str(hardpoint or "").strip()
@@ -3936,8 +4408,7 @@ def open_savegame_editor(self):
     def _set_story_lock_ui(active: bool, mission_num: int = 0) -> None:
         locked = bool(active)
         state["story_locked"] = locked
-        system_cb.setEnabled(not locked)
-        base_cb.setEnabled(not locked)
+        _refresh_location_lock_state()
         if locked:
             story_lock_lbl.setText(tr("savegame_editor.story_lock").format(mn=int(mission_num)))
             story_lock_lbl.setVisible(True)
@@ -3989,7 +4460,10 @@ def open_savegame_editor(self):
         if idx >= 0:
             rep_group_cb.setCurrentIndex(idx)
             return
-        label = faction_labels.get(rep.lower(), self._faction_ui_label(rep) or rep)
+        label = faction_labels.get(
+            rep.lower(),
+            _numeric_id_ui_label(rep) if _is_raw_numeric_id(rep) else (self._faction_ui_label(rep) or rep),
+        )
         rep_group_cb.addItem(label, rep)
         rep_group_cb.setCurrentIndex(rep_group_cb.count() - 1)
 
@@ -4175,20 +4649,24 @@ def open_savegame_editor(self):
     dlg.installEventFilter(_close_guard)
 
     def _parse_savegame(path: Path) -> tuple[bool, str]:
-        _set_loading_progress(2)
+        _set_loading_progress(2, _tr_or("savegame_editor.loading_phase.read", "Reading file"))
+        try:
+            state["encrypted_input"] = bool(path.read_bytes().startswith(b"FLS1"))
+        except Exception:
+            state["encrypted_input"] = False
         try:
             raw = self._read_text_best_effort(path)
         except Exception as exc:
             return False, str(exc)
-        _set_loading_progress(10)
+        _set_loading_progress(10, _tr_or("savegame_editor.loading_phase.decode", "Decoding savegame"))
         lines = raw.splitlines()
-        _set_loading_progress(14)
+        _set_loading_progress(14, _tr_or("savegame_editor.loading_phase.sections", "Scanning sections"))
         bounds = self._find_ini_section_bounds(lines, "Player", None)
         if bounds is None:
             return False, tr("savegame_editor.player_missing")
         s, e = bounds
         player_lines = lines[s:e]
-        _set_loading_progress(18)
+        _set_loading_progress(18, _tr_or("savegame_editor.loading_phase.player", "Parsing player data"))
 
         rank = 0
         money = 0
@@ -4200,10 +4678,12 @@ def open_savegame_editor(self):
         com_head = ""
         com_lefthand = ""
         com_righthand = ""
+        com_costume = ""
         body = ""
         head = ""
         lefthand = ""
         righthand = ""
+        costume = ""
         ship_archetype = ""
         core_components: dict[str, tuple[str, str]] = {
             "power": ("", "1"),
@@ -4211,11 +4691,13 @@ def open_savegame_editor(self):
             "scanner": ("", "1"),
             "tractor": ("", "1"),
         }
+        unknown_internal_equip_rows: list[tuple[str, str, str]] = []
         fixed_battery_amount = 0
         fixed_repair_amount = 0
         equip_rows: list[tuple[str, str, str]] = []
         cargo_rows: list[tuple[str, int, str]] = []
-        houses: list[tuple[str, float]] = []
+        houses: list[tuple[str, float, str]] = []
+        original_player_values: dict[str, str] = {}
         total_player_lines = max(1, len(player_lines) - 1)
         for idx, raw_line in enumerate(player_lines[1:], start=1):
             line = str(raw_line).strip()
@@ -4236,30 +4718,49 @@ def open_savegame_editor(self):
                     money = 0
             elif k == "rep_group":
                 rep_group = v
+                original_player_values["rep_group"] = v
             elif k == "description":
                 description = v
+                original_player_values["description"] = v
             elif k == "system":
                 system = v
+                original_player_values["system"] = v
             elif k == "base":
                 base = v
+                original_player_values["base"] = v
             elif k == "com_body":
                 com_body = v
+                original_player_values["com_body"] = v
             elif k == "com_head":
                 com_head = v
+                original_player_values["com_head"] = v
             elif k == "com_lefthand":
                 com_lefthand = v
+                original_player_values["com_lefthand"] = v
             elif k == "com_righthand":
                 com_righthand = v
+                original_player_values["com_righthand"] = v
+            elif k == "com_costume":
+                com_costume = v
+                original_player_values["com_costume"] = v
             elif k == "body":
                 body = v
+                original_player_values["body"] = v
             elif k == "head":
                 head = v
+                original_player_values["head"] = v
             elif k == "lefthand":
                 lefthand = v
+                original_player_values["lefthand"] = v
             elif k == "righthand":
                 righthand = v
+                original_player_values["righthand"] = v
+            elif k == "costume":
+                costume = v
+                original_player_values["costume"] = v
             elif k == "ship_archetype":
                 ship_archetype = v
+                original_player_values["ship_archetype"] = v
             elif k == "equip":
                 parts = [x.strip() for x in v.split(",")]
                 if parts and parts[0]:
@@ -4272,8 +4773,12 @@ def open_savegame_editor(self):
                         core_item, _core_extra = core_components.get(core_key, ("", "1"))
                         if not core_item:
                             core_components[core_key] = (parts[0], extra or "1")
+                            original_player_values[f"core_{core_key}"] = str(raw_line or "").strip()
                         continue
-                    equip_rows.append((parts[0], hardpoint, extra))
+                    if (not hardpoint) and _is_incompatible_item_token(parts[0]):
+                        unknown_internal_equip_rows.append((parts[0], extra or "1", str(raw_line or "").strip()))
+                        continue
+                    equip_rows.append((parts[0], hardpoint, extra, str(raw_line or "").strip()))
             elif k == "cargo":
                 parts = [x.strip() for x in v.split(",")]
                 if not parts or not parts[0]:
@@ -4291,10 +4796,12 @@ def open_savegame_editor(self):
                 extra = ", ".join(parts[2:]).strip() if len(parts) > 2 else ", , 0"
                 if cargo_item_nick.lower() == "ge_s_battery_01":
                     fixed_battery_amount = max(0, int(amount))
+                    original_player_values["cargo_battery"] = str(raw_line or "").strip()
                 elif cargo_item_nick.lower() == "ge_s_repair_01":
                     fixed_repair_amount = max(0, int(amount))
+                    original_player_values["cargo_repair"] = str(raw_line or "").strip()
                 else:
-                    cargo_rows.append((parts[0], amount, extra))
+                    cargo_rows.append((parts[0], amount, extra, str(raw_line or "").strip()))
             elif k == "house":
                 parts = [x.strip() for x in v.split(",", 1)]
                 if len(parts) < 2:
@@ -4305,11 +4812,11 @@ def open_savegame_editor(self):
                     continue
                 faction = parts[1]
                 if faction:
-                    houses.append((faction, rep))
+                    houses.append((faction, rep, str(raw_line or "").strip()))
             if idx == 1 or (idx % 250 == 0) or idx == total_player_lines:
                 # Parsing phase: roughly 18% -> 58%.
                 phase = 18 + int((idx / total_player_lines) * 40)
-                _set_loading_progress(phase)
+                _set_loading_progress(phase, _tr_or("savegame_editor.loading_phase.player", "Parsing player data"))
 
         state["bulk_loading"] = True
         dlg.setUpdatesEnabled(False)
@@ -4317,7 +4824,31 @@ def open_savegame_editor(self):
         cargo_tbl.setUpdatesEnabled(False)
         houses_tbl.setUpdatesEnabled(False)
         try:
-            _set_loading_progress(62)
+            _set_trent_costume_lock(bool(str(costume).strip() or str(com_costume).strip()))
+            if costume and (not body) and (not head) and (not lefthand) and (not righthand):
+                row = dict(costume_map.get(str(costume).strip().lower(), {}) or {})
+                body = str(row.get("body", "") or "").strip()
+                head = str(row.get("head", "") or "").strip()
+                lefthand = str(row.get("lefthand", "") or "").strip()
+                righthand = str(row.get("righthand", "") or "").strip()
+            if com_costume and (not com_body) and (not com_head) and (not com_lefthand) and (not com_righthand):
+                row = dict(costume_map.get(str(com_costume).strip().lower(), {}) or {})
+                com_body = str(row.get("body", "") or "").strip()
+                com_head = str(row.get("head", "") or "").strip()
+                com_lefthand = str(row.get("lefthand", "") or "").strip()
+                com_righthand = str(row.get("righthand", "") or "").strip()
+            for core_key in ("power", "engine", "scanner", "tractor"):
+                cur_item, cur_extra = core_components.get(core_key, ("", "1"))
+                if cur_item:
+                    continue
+                if not unknown_internal_equip_rows:
+                    break
+                raw_item, raw_extra, raw_line = unknown_internal_equip_rows.pop(0)
+                core_components[core_key] = (raw_item, raw_extra or cur_extra or "1")
+                original_player_values[f"core_{core_key}"] = raw_line
+            for raw_item, raw_extra, raw_line in unknown_internal_equip_rows:
+                equip_rows.append((raw_item, "", raw_extra or "1", raw_line))
+            _set_loading_progress(62, _tr_or("savegame_editor.loading_phase.populate", "Applying values"))
             rank_spin.setValue(max(rank_spin.minimum(), min(rank_spin.maximum(), rank)))
             money_spin.setValue(max(money_spin.minimum(), min(money_spin.maximum(), money)))
             description_edit.setText(_decode_savegame_player_name(description))
@@ -4343,35 +4874,36 @@ def open_savegame_editor(self):
             fixed_repair_spin.setValue(max(0, int(fixed_repair_amount)))
             equip_tbl.setRowCount(0)
             total_equip = max(1, len(equip_rows))
-            for i, (item_nick, hp, extra) in enumerate(equip_rows, start=1):
-                _add_equip_row(item_nick, hp, extra, defer_refresh=True)
+            for i, (item_nick, hp, extra, raw_line) in enumerate(equip_rows, start=1):
+                _add_equip_row(item_nick, hp, extra, defer_refresh=True, raw_line=raw_line)
                 if i == 1 or (i % 100 == 0) or i == total_equip:
                     # Equip fill phase: 62% -> 70%
-                    _set_loading_progress(62 + int((i / total_equip) * 8))
+                    _set_loading_progress(62 + int((i / total_equip) * 8), _tr_or("savegame_editor.loading_phase.equip", "Building equipment table"))
             _ensure_empty_hardpoint_rows_for_ship(_combo_item_nick(ship_archetype_cb))
             cargo_tbl.setRowCount(0)
             total_cargo = max(1, len(cargo_rows))
-            for i, (item_nick, amount, extra) in enumerate(cargo_rows, start=1):
-                _add_cargo_row(item_nick, amount, extra)
+            for i, (item_nick, amount, extra, raw_line) in enumerate(cargo_rows, start=1):
+                _add_cargo_row(item_nick, amount, extra, raw_line=raw_line)
                 if i == 1 or (i % 100 == 0) or i == total_cargo:
                     # Cargo fill phase: 70% -> 76%
-                    _set_loading_progress(70 + int((i / total_cargo) * 6))
-            _set_loading_progress(76)
+                    _set_loading_progress(70 + int((i / total_cargo) * 6), _tr_or("savegame_editor.loading_phase.cargo", "Building cargo table"))
+            _set_loading_progress(76, _tr_or("savegame_editor.loading_phase.system", "Resolving system and base"))
             _refresh_equip_hardpoint_choices()
             _ensure_system_item(system)
             _rebuild_base_combo(system, preferred_base=base)
             state["current_system"] = str(system or "").strip()
             houses.sort(key=lambda x: x[0].lower())
             _set_houses(houses)
-            _set_loading_progress(82)
+            _set_loading_progress(82, _tr_or("savegame_editor.loading_phase.map", "Building maps"))
             locked_ids = _locked_gate_ids_from_lines(player_lines)
             visit_ids = _visit_ids_from_lines(player_lines)
             state["locked_ids"] = set(locked_ids)
             state["visit_ids"] = set(visit_ids)
             state["visit_line_by_id"] = _visit_line_map_from_lines(player_lines)
+            state["original_player_values"] = dict(original_player_values)
             _set_pending_locked_ids(set(locked_ids))
             _set_pending_visit_ids(set(visit_ids))
-            _set_loading_progress(92)
+            _set_loading_progress(92, _tr_or("savegame_editor.loading_phase.story", "Checking story state"))
             story_mission_num = 0
             story_bounds = self._find_ini_section_bounds(lines, "StoryInfo", None)
             if story_bounds is not None:
@@ -4390,13 +4922,16 @@ def open_savegame_editor(self):
                     break
             _set_savegame_loaded_state()
             _set_story_lock_ui(_story_edit_lock_active(story_mission_num), story_mission_num)
+            _apply_compatibility_locks()
+            _set_trent_costume_lock(bool(str(costume).strip() or str(com_costume).strip()))
+            _refresh_encryption_notice()
             _set_editor_title(path)
             info_lbl.setText("")
             state["path"] = path
             _remember_recent_save(path)
             state["last_ship_nick"] = _current_ship_nick()
             state["baseline_signature"] = _current_editor_signature()
-            _set_loading_progress(100)
+            _set_loading_progress(100, _tr_or("savegame_editor.loading_phase.finish", "Finishing"))
             return True, ""
         finally:
             state["bulk_loading"] = False
@@ -4466,9 +5001,16 @@ def open_savegame_editor(self):
             if k not in player_values:
                 player_values[k] = str(val or "").strip()
         if str(player_values.get("description", "")).strip():
-            return _decode_savegame_player_name(str(player_values.get("description", "")))
+            desc = _decode_savegame_player_name(str(player_values.get("description", "")))
+            if str(desc).strip().lower() not in {"newplayer", "trent"}:
+                return desc
         if str(player_values.get("name", "")).strip():
-            return _decode_savegame_player_name(str(player_values.get("name", "")))
+            name = _decode_savegame_player_name(str(player_values.get("name", "")))
+            if str(name).strip().lower() not in {"trent"}:
+                return name
+        stem = str(path.stem or "").strip().lower()
+        if stem in {"cfstart", "autosave", "restart"}:
+            return tr("savegame_editor.story_autosave_name")
         return ""
 
     def _backup_history_paths_for(path: Path) -> list[Path]:
@@ -4624,7 +5166,7 @@ def open_savegame_editor(self):
             _load_selected()
 
     def _load_game_data(target_game_path: str, *, reload_current_savegame: bool) -> bool:
-        nonlocal game_path, faction_labels, templates, nickname_labels, numeric_id_map
+        nonlocal game_path, faction_labels, templates, nickname_labels, numeric_id_map, costume_map
         nonlocal item_name_map, ship_nicks, equip_nicks, trent_nicks, trent_body_nicks
         nonlocal trent_head_nicks, trent_lh_nicks, trent_rh_nicks, ship_hardpoints_by_nick
         nonlocal ship_hp_types_by_hardpoint_by_nick
@@ -4639,6 +5181,7 @@ def open_savegame_editor(self):
         templates = self._savegame_editor_collect_rep_templates(gp)
         nickname_labels = self._savegame_editor_collect_nickname_labels(gp)
         numeric_id_map = self._savegame_editor_collect_numeric_id_map(gp)
+        costume_map = self._savegame_editor_collect_costumes(gp)
         system_label_by_nick = {}
         system_to_bases = {}
         if gp:
@@ -4847,7 +5390,7 @@ def open_savegame_editor(self):
     def _open_path_settings() -> None:
         pd = QDialog(dlg)
         pd.setWindowTitle(tr("savegame_editor.path_settings"))
-        pd.resize(760, 180)
+        pd.resize(760, 220)
         pl = QVBoxLayout(pd)
         form = QFormLayout()
         sg_row = QWidget(pd)
@@ -4868,6 +5411,21 @@ def open_savegame_editor(self):
         gm_browse = QPushButton(tr("welcome.browse"), pd)
         gm_l.addWidget(gm_browse)
         form.addRow(tr("savegame_editor.game_path"), gm_row)
+        preserve_encryption_cb = QCheckBox(
+            _tr_or(
+                "savegame_editor.preserve_encryption",
+                "Preserve encryption for encrypted savegames",
+            ),
+            pd,
+        )
+        preserve_encryption_cb.setChecked(bool(self._cfg.get("settings.savegame_preserve_encryption", True)))
+        preserve_encryption_cb.setToolTip(
+            _tr_or(
+                "savegame_editor.preserve_encryption_help",
+                "If enabled, savegames that were loaded from encrypted FLS1 files will also be saved encrypted.",
+            )
+        )
+        form.addRow("", preserve_encryption_cb)
         pl.addLayout(form)
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
@@ -4898,6 +5456,8 @@ def open_savegame_editor(self):
                 return
             if not _apply_game_path():
                 return
+            self._cfg.set("settings.savegame_preserve_encryption", bool(preserve_encryption_cb.isChecked()))
+            _refresh_encryption_notice()
             pd.accept()
 
         sg_browse.clicked.connect(_browse_save_path)
@@ -5126,40 +5686,86 @@ def open_savegame_editor(self):
                 )
                 return False
 
+        original_player_values = dict(state.get("original_player_values", {}) or {})
+
+        def _saved_single_value(key: str, current_value: str, widget: QWidget | None = None) -> str:
+            if isinstance(widget, QWidget) and bool(widget.property("fl_compat_locked")):
+                return str(original_player_values.get(key, current_value) or current_value).strip()
+            return str(current_value or "").strip()
+
+        def _drop_single_key(section_lines: list[str], key: str) -> list[str]:
+            if not section_lines:
+                return []
+            header = section_lines[0]
+            key_l = str(key or "").strip().lower()
+            body = []
+            for ln in section_lines[1:]:
+                c = str(ln or "").split(";", 1)[0].strip()
+                if c and "=" in c and str(c.split("=", 1)[0] or "").strip().lower() == key_l:
+                    continue
+                body.append(ln)
+            return [header] + body
+
+        def _saved_single_item_token(key: str, cb: QComboBox) -> str:
+            if bool(cb.property("fl_compat_locked")):
+                return str(original_player_values.get(key, "") or "").strip()
+            return _item_token_or_numeric_for_save(_combo_item_nick(cb))
+
+        def _preserve_or_drop_trent_key(section_lines: list[str], key: str) -> list[str]:
+            original = str(original_player_values.get(key, "") or "").strip()
+            if original:
+                updated, _ = self._set_single_key_line_in_section(section_lines, key, f"{key} = {original}")
+                return updated
+            return _drop_single_key(section_lines, key)
+
         player, _ = self._set_single_key_line_in_section(player, "rank", f"rank = {int(rank_spin.value())}")
         player, _ = self._set_single_key_line_in_section(player, "money", f"money = {int(money_spin.value())}")
         enc_description = _encode_savegame_player_name(description_edit.text())
         if enc_description:
             player, _ = self._set_single_key_line_in_section(player, "description", f"description = {enc_description}")
-        player, _ = self._set_single_key_line_in_section(player, "rep_group", f"rep_group = {_current_rep_group_nick()}")
-        player, _ = self._set_single_key_line_in_section(player, "system", f"system = {new_system}")
-        player, _ = self._set_single_key_line_in_section(player, "base", f"base = {new_base}")
+        rep_group_out = _saved_single_value("rep_group", _current_rep_group_nick(), rep_group_cb)
+        if rep_group_out:
+            player, _ = self._set_single_key_line_in_section(player, "rep_group", f"rep_group = {rep_group_out}")
+        else:
+            player = _drop_single_key(player, "rep_group")
         player, _ = self._set_single_key_line_in_section(
-            player, "com_body", f"com_body = {_item_token_or_numeric_for_save(_combo_item_nick(com_body_cb))}"
+            player, "system", f"system = {_saved_single_value('system', new_system, system_cb)}"
         )
-        player, _ = self._set_single_key_line_in_section(
-            player, "com_head", f"com_head = {_item_token_or_numeric_for_save(_combo_item_nick(com_head_cb))}"
-        )
-        player, _ = self._set_single_key_line_in_section(
-            player, "com_lefthand", f"com_lefthand = {_item_token_or_numeric_for_save(_combo_item_nick(com_lh_cb))}"
-        )
-        player, _ = self._set_single_key_line_in_section(
-            player, "com_righthand", f"com_righthand = {_item_token_or_numeric_for_save(_combo_item_nick(com_rh_cb))}"
-        )
-        player, _ = self._set_single_key_line_in_section(
-            player, "body", f"body = {_item_token_or_numeric_for_save(_combo_item_nick(body_cb))}"
-        )
-        player, _ = self._set_single_key_line_in_section(
-            player, "head", f"head = {_item_token_or_numeric_for_save(_combo_item_nick(head_cb))}"
-        )
-        player, _ = self._set_single_key_line_in_section(
-            player, "lefthand", f"lefthand = {_item_token_or_numeric_for_save(_combo_item_nick(lh_cb))}"
-        )
-        player, _ = self._set_single_key_line_in_section(
-            player, "righthand", f"righthand = {_item_token_or_numeric_for_save(_combo_item_nick(rh_cb))}"
-        )
+        base_out = _saved_single_value("base", new_base, base_cb)
+        if base_out:
+            player, _ = self._set_single_key_line_in_section(player, "base", f"base = {base_out}")
+        else:
+            player = _drop_single_key(player, "base")
+        if bool(state.get("trent_costume_locked", False)):
+            for trent_key in ("com_body", "com_head", "com_lefthand", "com_righthand", "body", "head", "lefthand", "righthand", "costume", "com_costume"):
+                player = _preserve_or_drop_trent_key(player, trent_key)
+        else:
+            player, _ = self._set_single_key_line_in_section(
+                player, "com_body", f"com_body = {_saved_single_item_token('com_body', com_body_cb)}"
+            )
+            player, _ = self._set_single_key_line_in_section(
+                player, "com_head", f"com_head = {_saved_single_item_token('com_head', com_head_cb)}"
+            )
+            player, _ = self._set_single_key_line_in_section(
+                player, "com_lefthand", f"com_lefthand = {_saved_single_item_token('com_lefthand', com_lh_cb)}"
+            )
+            player, _ = self._set_single_key_line_in_section(
+                player, "com_righthand", f"com_righthand = {_saved_single_item_token('com_righthand', com_rh_cb)}"
+            )
+            player, _ = self._set_single_key_line_in_section(
+                player, "body", f"body = {_saved_single_item_token('body', body_cb)}"
+            )
+            player, _ = self._set_single_key_line_in_section(
+                player, "head", f"head = {_saved_single_item_token('head', head_cb)}"
+            )
+            player, _ = self._set_single_key_line_in_section(
+                player, "lefthand", f"lefthand = {_saved_single_item_token('lefthand', lh_cb)}"
+            )
+            player, _ = self._set_single_key_line_in_section(
+                player, "righthand", f"righthand = {_saved_single_item_token('righthand', rh_cb)}"
+            )
         current_ship_nick = _combo_item_nick(ship_archetype_cb)
-        ship_token = _item_token_for_save(current_ship_nick)
+        ship_token = str(original_player_values.get("ship_archetype", "") or "").strip() if bool(ship_archetype_cb.property("fl_compat_locked")) else _item_token_for_save(current_ship_nick)
         player, _ = self._set_single_key_line_in_section(player, "ship_archetype", f"ship_archetype = {ship_token}")
 
         missing_core: list[str] = []
@@ -5194,15 +5800,44 @@ def open_savegame_editor(self):
             )
             return False
 
-        house_lines = [f"house = {_fmt_rep(rep)}, {faction}" for faction, rep in _current_houses()]
+        house_lines: list[str] = []
+        for r in range(houses_tbl.rowCount()):
+            fac_item = houses_tbl.item(r, 0)
+            rep_spin = houses_tbl.cellWidget(r, 1)
+            faction = str(fac_item.data(Qt.UserRole) if fac_item else "").strip()
+            if not faction or not isinstance(rep_spin, QDoubleSpinBox):
+                continue
+            raw_line = str(fac_item.data(Qt.UserRole + 1) if fac_item else "").strip()
+            if bool(rep_spin.property("fl_compat_locked")) and raw_line:
+                house_lines.append(raw_line)
+                continue
+            house_lines.append(f"house = {_fmt_rep(float(rep_spin.value()))}, {faction}")
         equip_lines: list[str] = []
         for _core_name, core_cb in [("power", core_power_cb), ("engine", core_engine_cb), ("scanner", core_scanner_cb), ("tractor", core_tractor_cb)]:
+            if bool(core_cb.property("fl_compat_locked")):
+                raw_line = str(original_player_values.get(f"core_{_core_name}", "") or "").strip()
+                if raw_line:
+                    equip_lines.append(raw_line)
+                continue
             core_nick = _combo_item_nick(core_cb)
             item_token = _item_token_for_save(core_nick)
             if item_token:
                 tail = str(core_cb.property("fl_extra") or "").strip() or "1"
                 equip_lines.append(f"equip = {item_token}, , {tail}")
-        for item_nick, hardpoint, extra in _equip_rows():
+        for r in range(equip_tbl.rowCount()):
+            item_cb = equip_tbl.cellWidget(r, 0)
+            hp_w = equip_tbl.cellWidget(r, 1)
+            if not isinstance(item_cb, QComboBox):
+                continue
+            raw_line = str(item_cb.property("fl_raw_line") or "").strip()
+            if bool(item_cb.property("fl_compat_locked")) and raw_line:
+                equip_lines.append(raw_line)
+                continue
+            item_nick = _combo_item_nick(item_cb)
+            if not item_nick or _core_component_key_for_item(item_nick) in {"power", "engine", "scanner", "tractor"}:
+                continue
+            hardpoint = _hardpoint_from_widget(hp_w)
+            extra = str(item_cb.property("fl_extra") or "").strip()
             item_token = _item_token_for_save(item_nick)
             if not item_token:
                 continue
@@ -5210,15 +5845,33 @@ def open_savegame_editor(self):
             equip_lines.append(f"equip = {item_token}, {hardpoint if hardpoint else ''}, {tail}" if hardpoint else f"equip = {item_token}, , {tail}")
 
         cargo_lines: list[str] = []
-        for fixed_nick, fixed_amount in [("ge_s_battery_01", int(fixed_battery_spin.value())), ("ge_s_repair_01", int(fixed_repair_spin.value()))]:
+        for fixed_key, fixed_nick, fixed_amount in [
+            ("cargo_battery", "ge_s_battery_01", int(fixed_battery_spin.value())),
+            ("cargo_repair", "ge_s_repair_01", int(fixed_repair_spin.value())),
+        ]:
             if int(fixed_amount) <= 0:
+                continue
+            raw_line = str(original_player_values.get(fixed_key, "") or "").strip()
+            if raw_line and _is_incompatible_item_token(fixed_nick):
+                cargo_lines.append(raw_line)
                 continue
             item_token = _item_token_for_save(fixed_nick)
             if item_token:
                 cargo_lines.append(f"cargo = {item_token}, {int(fixed_amount)}, , , 0")
-        for item_nick, amount, extra in _cargo_rows():
+        for r in range(cargo_tbl.rowCount()):
+            item_cb = cargo_tbl.cellWidget(r, 0)
+            amt_spin = cargo_tbl.cellWidget(r, 1)
+            if not isinstance(item_cb, QComboBox):
+                continue
+            raw_line = str(item_cb.property("fl_raw_line") or "").strip()
+            if bool(item_cb.property("fl_compat_locked")) and raw_line:
+                cargo_lines.append(raw_line)
+                continue
+            item_nick = _combo_item_nick(item_cb)
             if str(item_nick or "").strip().lower() in {"ge_s_battery_01", "ge_s_repair_01"}:
                 continue
+            amount = int(amt_spin.value()) if isinstance(amt_spin, QSpinBox) else 0
+            extra = str(item_cb.property("fl_extra") or "").strip()
             item_token = _item_token_for_save(item_nick)
             if not item_token:
                 continue
@@ -5444,15 +6097,28 @@ def open_savegame_editor(self):
         except Exception:
             return
         template_faction = str(tpl.get("faction") or "").strip()
-        rows: list[tuple[str, float]] = []
+        preserved_incompatible: list[tuple[str, float, str]] = []
+        for r in range(houses_tbl.rowCount()):
+            fac_item = houses_tbl.item(r, 0)
+            rep_spin = houses_tbl.cellWidget(r, 1)
+            if fac_item is None or not isinstance(rep_spin, QDoubleSpinBox):
+                continue
+            fac = str(fac_item.data(Qt.UserRole) or "").strip()
+            if not fac or not _is_incompatible_faction_token(fac):
+                continue
+            raw_line = str(fac_item.data(Qt.UserRole + 1) or "").strip()
+            preserved_incompatible.append((fac, float(rep_spin.value()), raw_line))
+        rows: list[tuple[str, float, str]] = []
         for fac, val in houses_in.items():
             rep = float(val)
             rep = max(-0.91, min(0.91, rep))
-            rows.append((fac, rep))
+            rows.append((fac, rep, ""))
+        rows.extend(preserved_incompatible)
         rows.sort(key=lambda x: x[0].lower())
         _set_houses(rows)
         if template_faction:
             _set_rep_group_value(template_faction)
+        _apply_compatibility_locks()
         info_lbl.setText(
             tr("savegame_editor.template_applied").format(
                 template=str(tpl.get("name") or ""),
@@ -5504,7 +6170,13 @@ def open_savegame_editor(self):
         c = str(code or "").strip()
         if not c:
             continue
-        label = {"de": "Deutsch", "en": "English"}.get(c.lower(), c.upper())
+        label = {
+            "de": "Deutsch",
+            "en": "English",
+            "ru": "Русский",
+            "es": "Español",
+            "fr": "Français",
+        }.get(c.lower(), c.upper())
         act = language_menu.addAction(label)
         act.setCheckable(True)
         act.setChecked(c.lower() == str(get_language() or "").lower())
@@ -5516,14 +6188,10 @@ def open_savegame_editor(self):
     system_cb.currentIndexChanged.connect(lambda _idx: (_rebuild_base_combo(_current_system_nick(), _current_base_nick()), _update_current_system_marker()))
     system_cb.currentTextChanged.connect(lambda _txt: (_rebuild_base_combo(_current_system_nick(), _current_base_nick()), _update_current_system_marker()))
     equip_add_btn.clicked.connect(lambda: _add_equip_row("", ""))
-    equip_del_btn.clicked.connect(
-        lambda: (equip_tbl.removeRow(equip_tbl.currentRow()), _refresh_hardpoint_hint(), _refresh_equip_table_filter()) if equip_tbl.currentRow() >= 0 else None
-    )
+    equip_del_btn.clicked.connect(_remove_selected_equip_row)
     equip_autofix_btn.clicked.connect(_autofix_invalid_hardpoints)
     cargo_add_btn.clicked.connect(lambda: _add_cargo_row("", 1))
-    cargo_del_btn.clicked.connect(
-        lambda: (cargo_tbl.removeRow(cargo_tbl.currentRow()), _refresh_cargo_table_filter()) if cargo_tbl.currentRow() >= 0 else None
-    )
+    cargo_del_btn.clicked.connect(_remove_selected_cargo_row)
     equip_filter_edit.textChanged.connect(lambda _txt: _refresh_equip_table_filter())
     cargo_filter_edit.textChanged.connect(lambda _txt: _refresh_cargo_table_filter())
     houses_filter_edit.textChanged.connect(lambda _txt: _refresh_houses_table_filter())
@@ -5800,7 +6468,7 @@ def _standalone_ensure_paths(host: _SavegameEditorHost) -> bool:
     _close_startup_splash()
     dlg = QDialog(host)
     dlg.setWindowTitle(tr("savegame_editor.path_settings"))
-    dlg.resize(800, 220)
+    dlg.resize(800, 250)
     lay = QVBoxLayout(dlg)
     info = QLabel(
         tr("savegame_editor.standalone.paths_required"),
@@ -5840,6 +6508,21 @@ def _standalone_ensure_paths(host: _SavegameEditorHost) -> bool:
     gm_browse = QPushButton(tr("welcome.browse"), dlg)
     gm_l.addWidget(gm_browse)
     form.addRow(tr("savegame_editor.game_path"), gm_row)
+    preserve_encryption_cb = QCheckBox(
+        _tr_or(
+            "savegame_editor.preserve_encryption",
+            "Preserve encryption for encrypted savegames",
+        ),
+        dlg,
+    )
+    preserve_encryption_cb.setChecked(bool(cfg.get("settings.savegame_preserve_encryption", True)))
+    preserve_encryption_cb.setToolTip(
+        _tr_or(
+            "savegame_editor.preserve_encryption_help",
+            "If enabled, savegames that were loaded from encrypted FLS1 files will also be saved encrypted.",
+        )
+    )
+    form.addRow("", preserve_encryption_cb)
     lay.addLayout(form)
 
     buttons = QHBoxLayout()
@@ -5880,6 +6563,7 @@ def _standalone_ensure_paths(host: _SavegameEditorHost) -> bool:
             return
         cfg.set("settings.savegame_path", sg)
         cfg.set("settings.savegame_game_path", gm)
+        cfg.set("settings.savegame_preserve_encryption", bool(preserve_encryption_cb.isChecked()))
         dlg.accept()
 
     sg_browse.clicked.connect(_browse_save_path)
