@@ -1,6 +1,6 @@
 # FL Atlas - Savegame Editor Roadmap
 
-## Current Status (v0.1.2)
+## Current Status (v0.1.3)
 - Standalone savegame editor is stable with:
   - conventional menu bar
   - path settings
@@ -19,6 +19,10 @@
   - locked gate tools
 - Startup is faster because game data loads lazily.
 - Story-save protection blocks risky system/base writes conservatively.
+- Ship editing is split into dedicated core/equip/cargo subtabs.
+- Incompatible save entries stay visible as locked read-only rows instead of breaking the editor.
+- Encrypted `FLS1` saves are preserved by default and shown with an in-editor notice.
+- Costume-based Trent saves stay in their original format and lock Trent customization safely.
 
 ## Release Readiness
 - Packaging assets are present:
@@ -40,12 +44,12 @@
   - current file that will be replaced
 - Tighten save safety around location-sensitive fields beyond system/base if needed.
 
-## Next Release Goals (v0.1.3)
+## Next Release Goals (v0.1.4)
 - Undo/Redo for the in-memory editing session
 - Better search/filter support for combo-heavy editors
 - Clearer diff preview before save with categorized sections
-- Improved backup restore preview for large files
-- Additional DE/EN translation cleanup
+- Improved backup restore preview for very large files
+- Preserve incompatible `rep_group` values when applying reputation templates
 
 ## Mid-Term Goals (v0.2.x)
 - Batch tools for cargo and equipment edits

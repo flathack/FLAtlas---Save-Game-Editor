@@ -5,7 +5,7 @@ Standalone editor for **Freelancer** singleplayer save files (`*.fl`).
 Developed by **Aldenmar Odin - flathack**.
 
 ## Version
-- Current: `v0.1.2`
+- Current: `v0.1.3`
 
 ## Core Features
 - Open and edit Freelancer savegames with `filename - in-game name` display
@@ -16,6 +16,8 @@ Developed by **Aldenmar Odin - flathack**.
 - Safe save workflow with automatic backup history
 - Built-in backup restore dialog with backup list and diff preview
 - Story-save protection for risky `system` / `base` edits
+- Encrypted `FLS1` saves stay encrypted by default when saved again
+- Better compatibility handling for foreign or partially incompatible saves
 
 ## Editor Tabs
 - `Visited`
@@ -31,8 +33,10 @@ Developed by **Aldenmar Odin - flathack**.
   - cleanup and validation support
 - `Trent`
   - editable Trent appearance parts
+  - costume-based saves are detected and kept read-only to preserve original `costume` / `com_costume` entries
 - `Ship`
   - ship archetype
+  - subtabs for `Core Components`, `Equip Entries`, and `Cargo Entries`
   - core equipment
   - hardpoint-aware equipment editing
   - cargo editing
@@ -50,6 +54,10 @@ Developed by **Aldenmar Odin - flathack**.
 - save preview shows a compact list of pending changes before write
 - plain-text save writing preserves file formatting correctly
 - every save creates a new timestamped backup snapshot
+- incompatible numeric IDs stay visible in the UI instead of breaking the load flow
+- incompatible entries are shown as locked/read-only and are preserved on save
+- a visible compatibility warning is shown when the loaded save does not fully match the configured game data
+- a visible encryption notice shows whether the current save is encrypted and whether it will be saved encrypted again
 
 ## Backup Workflow
 - Each save creates:
@@ -73,7 +81,12 @@ Developed by **Aldenmar Odin - flathack**.
   - `Restart.fl`
   - `AutoSave.fl`
   - `AutoStart.fl`
-- DE/EN translations updated for current editor flows
+- translations available for:
+  - `de`
+  - `en`
+  - `es`
+  - `fr`
+  - `ru`
 
 ## Requirements
 - Python 3.10+
@@ -131,6 +144,7 @@ Relevant settings:
 - `settings.savegame_path`
 - `settings.savegame_game_path`
 - `settings.savegame_recent_files`
+- `settings.savegame_preserve_encryption`
 - `settings.theme`
 - `settings.language`
 

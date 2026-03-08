@@ -2417,6 +2417,24 @@ def open_savegame_editor(self):
     ship_tabs.addTab(ship_equip_tab, _tr_or("savegame_editor.ship_subtab.equip", "Equip Entries"))
     ship_tabs.addTab(ship_cargo_tab, _tr_or("savegame_editor.ship_subtab.cargo", "Cargo Entries"))
     ship_l.addWidget(ship_tabs, 1)
+    ship_editor_controls = [
+        ship_archetype_cb,
+        core_power_cb,
+        core_engine_cb,
+        core_scanner_cb,
+        core_tractor_cb,
+        equip_filter_edit,
+        equip_tbl,
+        equip_add_btn,
+        equip_del_btn,
+        equip_autofix_btn,
+        cargo_filter_edit,
+        fixed_battery_spin,
+        fixed_repair_spin,
+        cargo_tbl,
+        cargo_add_btn,
+        cargo_del_btn,
+    ]
     ship_tab_l.addWidget(ship_box, 1)
 
     houses_lbl = QLabel(tr("savegame_editor.houses"))
@@ -2671,6 +2689,7 @@ def open_savegame_editor(self):
         apply_template_btn.setEnabled(bool(templates))
         act_file_reload.setEnabled(True)
         act_file_save.setEnabled(True)
+        _refresh_ship_editor_lock()
 
     def _set_loading(active: bool) -> None:
         load_progress.setVisible(active)
@@ -3015,6 +3034,7 @@ def open_savegame_editor(self):
             compatibility_lbl.setText("")
             compatibility_lbl.setToolTip("")
             compatibility_lbl.setVisible(False)
+        _refresh_ship_editor_lock()
 
     def _remove_selected_equip_row() -> None:
         row = equip_tbl.currentRow()
@@ -3733,6 +3753,32 @@ def open_savegame_editor(self):
             + tr("savegame_editor.hardpoints_free_list").format(items=", ".join(free[:20]) if free else "-")
         )
 
+    def _refresh_ship_editor_lock() -> None:
+        ship_nick = _current_ship_nick().strip()
+        has_ship = bool(ship_nick)
+        has_hardpoints = bool(_ship_hardpoints(ship_nick)) if has_ship else False
+        lock_ship_editor = not (has_ship and has_hardpoints)
+        for widget in ship_editor_controls:
+            if widget is ship_archetype_cb:
+                widget.setEnabled(not lock_ship_editor and (not bool(widget.property("fl_compat_locked"))))
+                continue
+            if widget in core_component_cbs:
+                widget.setEnabled(not lock_ship_editor and (not bool(widget.property("fl_compat_locked"))))
+                continue
+            if widget in (equip_del_btn, cargo_del_btn):
+                widget.setEnabled(not lock_ship_editor)
+                continue
+            widget.setEnabled(not lock_ship_editor)
+        if lock_ship_editor:
+            hardpoint_hint_lbl.setText(
+                _tr_or(
+                    "savegame_editor.ship_editor_locked_no_ship",
+                    "Ship editing is disabled because no compatible ship archetype with hardpoint data could be resolved.",
+                )
+            )
+        else:
+            _refresh_hardpoint_hint()
+
     _setup_item_combo(ship_archetype_cb, ship_nicks)
     _setup_item_combo(core_power_cb, power_nicks)
     _setup_item_combo(core_engine_cb, engine_nicks)
@@ -4280,14 +4326,14 @@ def open_savegame_editor(self):
         new_ship = _current_ship_nick()
         if bool(state.get("bulk_loading", False)):
             state["last_ship_nick"] = new_ship
-            _refresh_equip_hardpoint_choices()
+            _refresh_ship_editor_lock()
             return
         if new_ship and new_ship.lower() != prev_ship.lower():
             _replace_ship_lights_for_ship_switch(prev_ship, new_ship)
             _clear_invalid_hardpoints_for_ship(new_ship)
             _ensure_empty_hardpoint_rows_for_ship(new_ship)
         state["last_ship_nick"] = new_ship
-        _refresh_equip_hardpoint_choices()
+        _refresh_ship_editor_lock()
 
     def _collect_invalid_hardpoint_rows(
         ship_nick: str,
