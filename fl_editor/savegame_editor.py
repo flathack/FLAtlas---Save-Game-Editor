@@ -943,10 +943,12 @@ class _SavegameEditorHost(QMainWindow):
             out.append(int(b) ^ (gene_cipher | 0x80))
         return bytes(out)
 
-    def _should_write_fls1(self, path: Path) -> bool:
+    def _should_write_fls1(self, path: Path, *, source_encrypted: bool = False) -> bool:
         preserve_encryption = bool(self._cfg.get("settings.savegame_preserve_encryption", True))
         if not preserve_encryption:
             return False
+        if source_encrypted:
+            return True
         try:
             if path.exists() and path.read_bytes().startswith(b"FLS1"):
                 return True
@@ -965,9 +967,11 @@ class _SavegameEditorHost(QMainWindow):
                 continue
         return False
 
-    def _write_text_preserve_format(self, path: Path, text: str) -> None:
-        if self._should_write_fls1(path):
-            normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\x85")
+    def _write_text_preserve_format(self, path: Path, text: str, *, source_encrypted: bool = False) -> None:
+        if self._should_write_fls1(path, source_encrypted=source_encrypted):
+            # Encrypted Freelancer saves still store normal LF separators in the
+            # decrypted payload. Writing 0x85 here collapses the save into one line.
+            normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
             try:
                 plain = normalized.encode("cp1252")
             except UnicodeEncodeError:
@@ -2488,6 +2492,8 @@ def open_savegame_editor(self):
         "compatibility_issues": [],
         "trent_costume_locked": False,
         "encrypted_input": False,
+        "story_mission_num": 0,
+        "story_mission_name": "",
         "story_locked": False,
         "bulk_loading": False,
         "last_ship_nick": "",
@@ -2569,6 +2575,8 @@ def open_savegame_editor(self):
         state["compatibility_issues"] = []
         state["trent_costume_locked"] = False
         state["encrypted_input"] = False
+        state["story_mission_num"] = 0
+        state["story_mission_name"] = ""
         rank_spin.setValue(0)
         money_spin.setValue(0)
         description_edit.clear()
@@ -2837,7 +2845,7 @@ def open_savegame_editor(self):
             widget.setEnabled(not locked)
 
     def _refresh_location_lock_state() -> None:
-        story_locked = bool(state.get("story_locked", False))
+        story_locked = bool(state.get("story_locked", False)) and (not bool(self._cfg.get("settings.savegame_expert_mode", False)))
         system_cb.setEnabled((not story_locked) and (not bool(system_cb.property("fl_compat_locked"))))
         base_cb.setEnabled((not story_locked) and (not bool(base_cb.property("fl_compat_locked"))))
 
@@ -2869,7 +2877,8 @@ def open_savegame_editor(self):
         encryption_lbl.setVisible(True)
 
     def _set_trent_costume_lock(active: bool) -> None:
-        locked = bool(active)
+        expert_mode = bool(self._cfg.get("settings.savegame_expert_mode", False))
+        locked = bool(active) and (not expert_mode)
         state["trent_costume_locked"] = locked
         for cb in trent_item_cbs:
             if bool(cb.property("fl_compat_locked")):
@@ -2888,11 +2897,12 @@ def open_savegame_editor(self):
             trent_lock_lbl.setVisible(False)
 
     def _apply_compatibility_locks() -> None:
+        expert_mode = bool(self._cfg.get("settings.savegame_expert_mode", False))
         issues: list[str] = []
 
         def _lock_item_combo(cb: QComboBox, label: str) -> None:
             token = _combo_item_nick(cb).strip()
-            bad = _is_incompatible_item_token(token)
+            bad = (not expert_mode) and _is_incompatible_item_token(token)
             tip = _tr_or(
                 "savegame_editor.compat.tooltip.item",
                 "This entry is not compatible with the current game data and is read-only.",
@@ -2901,7 +2911,7 @@ def open_savegame_editor(self):
             if bad:
                 issues.append(f"{label}: {_item_ui_label(token) or token}")
 
-        rep_bad = _is_incompatible_faction_token(_current_rep_group_nick())
+        rep_bad = (not expert_mode) and _is_incompatible_faction_token(_current_rep_group_nick())
         _set_widget_compat_locked(
             rep_group_cb,
             rep_bad,
@@ -2910,7 +2920,7 @@ def open_savegame_editor(self):
         if rep_bad:
             issues.append(f"{tr('savegame_editor.rep_group')}: {_current_rep_group_nick()}")
 
-        sys_bad = _is_incompatible_system_token(_current_system_nick())
+        sys_bad = (not expert_mode) and _is_incompatible_system_token(_current_system_nick())
         _set_widget_compat_locked(
             system_cb,
             sys_bad,
@@ -2919,7 +2929,7 @@ def open_savegame_editor(self):
         if sys_bad:
             issues.append(f"{tr('savegame_editor.system')}: {_current_system_nick()}")
 
-        base_bad = _is_incompatible_base_token(_current_base_nick())
+        base_bad = (not expert_mode) and _is_incompatible_base_token(_current_base_nick())
         _set_widget_compat_locked(
             base_cb,
             base_bad,
@@ -2951,7 +2961,7 @@ def open_savegame_editor(self):
             if not isinstance(item_cb, QComboBox):
                 continue
             token = _combo_item_nick(item_cb).strip()
-            bad = _is_incompatible_item_token(token)
+            bad = (not expert_mode) and _is_incompatible_item_token(token)
             tip = _tr_or(
                 "savegame_editor.compat.tooltip.item_row",
                 "This equipment entry is not compatible with the current game data and is read-only.",
@@ -2968,7 +2978,7 @@ def open_savegame_editor(self):
             if not isinstance(item_cb, QComboBox):
                 continue
             token = _combo_item_nick(item_cb).strip()
-            bad = _is_incompatible_item_token(token)
+            bad = (not expert_mode) and _is_incompatible_item_token(token)
             tip = _tr_or(
                 "savegame_editor.compat.tooltip.cargo_row",
                 "This cargo entry is not compatible with the current game data and is read-only.",
@@ -2982,7 +2992,7 @@ def open_savegame_editor(self):
         for row in range(houses_tbl.rowCount()):
             fac_item = houses_tbl.item(row, 0)
             fac = str(fac_item.data(Qt.UserRole) if fac_item else "").strip()
-            bad = _is_incompatible_faction_token(fac)
+            bad = (not expert_mode) and _is_incompatible_faction_token(fac)
             tip = _tr_or(
                 "savegame_editor.compat.tooltip.house_row",
                 "This faction entry is not compatible with the current game data and is read-only.",
@@ -3007,7 +3017,7 @@ def open_savegame_editor(self):
             mapped = str(hash_to_nick.get(iv, "") or numeric_id_map.get(iv, "") or "").strip()
             if not mapped:
                 unresolved_visit_ids += 1
-        if unresolved_visit_ids > 0:
+        if unresolved_visit_ids > 0 and not expert_mode:
             issues.append(
                 _tr_or(
                     "savegame_editor.compat.issue.visits",
@@ -3346,15 +3356,17 @@ def open_savegame_editor(self):
             fac_disp = str(nickname_labels.get(raw.lower(), "") or "").strip()
             if " - " in fac_disp:
                 disp = fac_disp.split(" - ", 1)[1].strip()
+        class_text = _item_class_text(raw)
+        class_suffix = f" ({class_text})" if class_text else ""
         if raw_numeric and mapped_numeric:
             if disp and disp.lower() != raw.lower():
-                return f"{_numeric_id_ui_label(raw_numeric)} - {raw} - {disp}"
-            return f"{_numeric_id_ui_label(raw_numeric)} - {raw}"
+                return f"{_numeric_id_ui_label(raw_numeric)} - {raw} - {disp}{class_suffix}"
+            return f"{_numeric_id_ui_label(raw_numeric)} - {raw}{class_suffix}"
         if raw_numeric:
             return _numeric_id_ui_label(raw_numeric)
         if disp and disp.lower() != raw.lower():
-            return f"{raw} - {disp}"
-        return raw
+            return f"{raw} - {disp}{class_suffix}"
+        return f"{raw}{class_suffix}"
 
     def _item_from_ui(raw: str) -> str:
         txt = str(raw or "").strip()
@@ -3432,6 +3444,35 @@ def open_savegame_editor(self):
     def _equip_hp_types(nick: str) -> set[str]:
         vals = list(equip_hp_types_by_nick.get(str(nick or "").strip().lower(), []) or [])
         return {str(v).strip().lower() for v in vals if str(v).strip()}
+
+    def _special_hp_class(hp_types: set[str], prefixes: tuple[str, ...]) -> int:
+        best = 0
+        for hp_t in set(hp_types or set()):
+            token = str(hp_t or "").strip().lower()
+            for prefix in prefixes:
+                pref = str(prefix or "").strip().lower()
+                if not pref:
+                    continue
+                m = re.fullmatch(rf"{re.escape(pref)}_(\d+)", token)
+                if not m:
+                    continue
+                try:
+                    best = max(best, int(m.group(1)))
+                except Exception:
+                    continue
+        return best
+
+    def _item_class_text(nick: str) -> str:
+        hp_types = _equip_hp_types(nick)
+        if not hp_types:
+            return ""
+        weapon_class = _special_hp_class(hp_types, ("hp_gun_special", "hp_turret_special"))
+        shield_class = _special_hp_class(
+            hp_types,
+            ("hp_fighter_shield_special", "hp_freighter_shield_special", "hp_elite_shield_special"),
+        )
+        cls = max(weapon_class, shield_class)
+        return f"Class {cls}" if cls > 0 else ""
 
     def _equip_goods_source(nick: str) -> str:
         return str(equip_goods_source_by_nick.get(str(nick or "").strip().lower(), "") or "").strip().lower()
@@ -3663,6 +3704,8 @@ def open_savegame_editor(self):
                 source_file="weapon_equip.ini",
                 hp_type_prefixes=("hp_torpedo_special",),
             )
+        if hp.startswith(("hpweapon", "hpturret")):
+            out = [nick for nick in out if "_ammo" not in str(nick or "").strip().lower()]
         return out
 
     def _ship_hp_types_for_hardpoint(ship_nick: str, hardpoint: str) -> set[str]:
@@ -3678,6 +3721,8 @@ def open_savegame_editor(self):
         hp = str(hardpoint or "").strip().lower()
         if not hp:
             return list(equip_nicks)
+        if hp.startswith(("hpweapon", "hpturret", "hpshield")):
+            return _typed_filter_for_hardpoint(hp, list(equip_nicks))
         ship_types = _ship_hp_types_for_hardpoint(_current_ship_nick(), hp)
         if ship_types:
             by_type = []
@@ -3754,10 +3799,11 @@ def open_savegame_editor(self):
         )
 
     def _refresh_ship_editor_lock() -> None:
+        expert_mode = bool(self._cfg.get("settings.savegame_expert_mode", False))
         ship_nick = _current_ship_nick().strip()
         has_ship = bool(ship_nick)
         has_hardpoints = bool(_ship_hardpoints(ship_nick)) if has_ship else False
-        lock_ship_editor = not (has_ship and has_hardpoints)
+        lock_ship_editor = (not expert_mode) and not (has_ship and has_hardpoints)
         for widget in ship_editor_controls:
             if widget is ship_archetype_cb:
                 widget.setEnabled(not lock_ship_editor and (not bool(widget.property("fl_compat_locked"))))
@@ -4443,12 +4489,18 @@ def open_savegame_editor(self):
         return txt
 
     def _story_edit_lock_active(mission_num: int) -> bool:
-        # Story-related saves can still crash on relocated system/base even
-        # outside the original 1..12 mission range, so lock conservatively.
+        return _story_edit_lock_active_with_name(mission_num, "")
+
+    def _story_edit_lock_active_with_name(mission_num: int, mission_name: str) -> bool:
+        if bool(self._cfg.get("settings.savegame_expert_mode", False)):
+            return False
         try:
             mn = int(mission_num)
         except Exception:
             mn = 0
+        mission = str(mission_name or "").strip().lower()
+        if mission in {"", "no_mission", "none"}:
+            return False
         return mn != 0
 
     def _set_story_lock_ui(active: bool, mission_num: int = 0) -> None:
@@ -4951,6 +5003,7 @@ def open_savegame_editor(self):
             _set_pending_visit_ids(set(visit_ids))
             _set_loading_progress(92, _tr_or("savegame_editor.loading_phase.story", "Checking story state"))
             story_mission_num = 0
+            story_mission_name = ""
             story_bounds = self._find_ini_section_bounds(lines, "StoryInfo", None)
             if story_bounds is not None:
                 ss, se = story_bounds
@@ -4959,15 +5012,18 @@ def open_savegame_editor(self):
                     if not core or "=" not in core:
                         continue
                     k, v = core.split("=", 1)
-                    if str(k or "").strip().lower() != "missionnum":
-                        continue
-                    try:
-                        story_mission_num = int(float(str(v or "").strip()))
-                    except Exception:
-                        story_mission_num = 0
-                    break
+                    key_l = str(k or "").strip().lower()
+                    if key_l == "missionnum":
+                        try:
+                            story_mission_num = int(float(str(v or "").strip()))
+                        except Exception:
+                            story_mission_num = 0
+                    elif key_l == "mission":
+                        story_mission_name = str(v or "").strip()
             _set_savegame_loaded_state()
-            _set_story_lock_ui(_story_edit_lock_active(story_mission_num), story_mission_num)
+            state["story_mission_num"] = story_mission_num
+            state["story_mission_name"] = story_mission_name
+            _set_story_lock_ui(_story_edit_lock_active_with_name(story_mission_num, story_mission_name), story_mission_num)
             _apply_compatibility_locks()
             _set_trent_costume_lock(bool(str(costume).strip() or str(com_costume).strip()))
             _refresh_encryption_notice()
@@ -5472,6 +5528,21 @@ def open_savegame_editor(self):
             )
         )
         form.addRow("", preserve_encryption_cb)
+        expert_mode_cb = QCheckBox(
+            _tr_or(
+                "savegame_editor.expert_mode",
+                "Enable Expert Mode",
+            ),
+            pd,
+        )
+        expert_mode_cb.setChecked(bool(self._cfg.get("settings.savegame_expert_mode", False)))
+        expert_mode_cb.setToolTip(
+            _tr_or(
+                "savegame_editor.expert_mode_help",
+                "If enabled, story locks, compatibility locks, and other safety restrictions can be bypassed.",
+            )
+        )
+        form.addRow("", expert_mode_cb)
         pl.addLayout(form)
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
@@ -5503,6 +5574,18 @@ def open_savegame_editor(self):
             if not _apply_game_path():
                 return
             self._cfg.set("settings.savegame_preserve_encryption", bool(preserve_encryption_cb.isChecked()))
+            self._cfg.set("settings.savegame_expert_mode", bool(expert_mode_cb.isChecked()))
+            _set_story_lock_ui(
+                _story_edit_lock_active_with_name(
+                    int(state.get("story_mission_num", 0) or 0),
+                    str(state.get("story_mission_name", "") or ""),
+                ),
+                int(state.get("story_mission_num", 0) or 0),
+            )
+            _apply_compatibility_locks()
+            orig_vals = dict(state.get("original_player_values", {}) or {})
+            _set_trent_costume_lock(bool(str(orig_vals.get("costume", "")).strip() or str(orig_vals.get("com_costume", "")).strip()))
+            _refresh_ship_editor_lock()
             _refresh_encryption_notice()
             pd.accept()
 
@@ -5705,6 +5788,7 @@ def open_savegame_editor(self):
         new_base = _current_base_nick()
 
         story_mission_num = 0
+        story_mission_name = ""
         story_bounds = self._find_ini_section_bounds(lines, "StoryInfo", None)
         if story_bounds is not None:
             ss, se = story_bounds
@@ -5713,14 +5797,15 @@ def open_savegame_editor(self):
                 if not core or "=" not in core:
                     continue
                 k, v = core.split("=", 1)
-                if str(k or "").strip().lower() != "missionnum":
-                    continue
-                try:
-                    story_mission_num = int(float(str(v or "").strip()))
-                except Exception:
-                    story_mission_num = 0
-                break
-        story_active = _story_edit_lock_active(story_mission_num)
+                key_l = str(k or "").strip().lower()
+                if key_l == "missionnum":
+                    try:
+                        story_mission_num = int(float(str(v or "").strip()))
+                    except Exception:
+                        story_mission_num = 0
+                elif key_l == "mission":
+                    story_mission_name = str(v or "").strip()
+        story_active = _story_edit_lock_active_with_name(story_mission_num, story_mission_name)
         if story_active:
             changed_system = bool(orig_system and new_system) and (orig_system.strip().lower() != new_system.strip().lower())
             changed_base = bool(orig_base and new_base) and (orig_base.strip().lower() != new_base.strip().lower())
@@ -5969,7 +6054,7 @@ def open_savegame_editor(self):
             text = newline.join(out_lines)
             if not text.endswith(newline):
                 text += newline
-            self._write_text_preserve_format(target_path, text)
+            self._write_text_preserve_format(target_path, text, source_encrypted=bool(state.get("encrypted_input", False)))
         except Exception as exc:
             QMessageBox.critical(dlg, tr("msg.save_error"), tr("savegame_editor.save_failed").format(error=exc))
             return False
@@ -6569,6 +6654,21 @@ def _standalone_ensure_paths(host: _SavegameEditorHost) -> bool:
         )
     )
     form.addRow("", preserve_encryption_cb)
+    expert_mode_cb = QCheckBox(
+        _tr_or(
+            "savegame_editor.expert_mode",
+            "Enable Expert Mode",
+        ),
+        dlg,
+    )
+    expert_mode_cb.setChecked(bool(cfg.get("settings.savegame_expert_mode", False)))
+    expert_mode_cb.setToolTip(
+        _tr_or(
+            "savegame_editor.expert_mode_help",
+            "If enabled, story locks, compatibility locks, and other safety restrictions can be bypassed.",
+        )
+    )
+    form.addRow("", expert_mode_cb)
     lay.addLayout(form)
 
     buttons = QHBoxLayout()
@@ -6610,6 +6710,7 @@ def _standalone_ensure_paths(host: _SavegameEditorHost) -> bool:
         cfg.set("settings.savegame_path", sg)
         cfg.set("settings.savegame_game_path", gm)
         cfg.set("settings.savegame_preserve_encryption", bool(preserve_encryption_cb.isChecked()))
+        cfg.set("settings.savegame_expert_mode", bool(expert_mode_cb.isChecked()))
         dlg.accept()
 
     sg_browse.clicked.connect(_browse_save_path)
