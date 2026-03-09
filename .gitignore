@@ -10,3 +10,4 @@ dist/
 
 FLAtlas-Savegame-Editor-*.spec
 release/
+.directory
