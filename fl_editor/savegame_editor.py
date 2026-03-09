@@ -2474,6 +2474,8 @@ def open_savegame_editor(self):
         "current_system": "",
         "updating_savegame_cb": False,
         "locked_ids": set(),
+        "locked_player_ids": set(),
+        "locked_readonly_ids": set(),
         "visit_ids": set(),
         "visit_line_by_id": {},
         "original_player_values": {},
@@ -2551,6 +2553,8 @@ def open_savegame_editor(self):
     def _set_no_savegame_state() -> None:
         state["path"] = None
         state["locked_ids"] = set()
+        state["locked_player_ids"] = set()
+        state["locked_readonly_ids"] = set()
         state["visit_ids"] = set()
         state["visit_line_by_id"] = {}
         state["original_player_values"] = {}
@@ -3891,8 +3895,9 @@ def open_savegame_editor(self):
             _insert_house_row(faction, rep, raw_line)
         _refresh_houses_table_filter()
 
-    def _locked_gate_ids_from_lines(lines: list[str]) -> set[int]:
+    def _locked_gate_ids_from_lines(lines: list[str], allowed_keys: set[str] | None = None) -> set[int]:
         out: set[int] = set()
+        allowed = {str(v).strip().lower() for v in set(allowed_keys or {"locked_gate", "npc_locked_gate"}) if str(v).strip()}
         for raw_line in lines:
             line = str(raw_line or "")
             core = line.split(";", 1)[0].strip()
@@ -3900,7 +3905,7 @@ def open_savegame_editor(self):
                 continue
             key, value = core.split("=", 1)
             k = str(key or "").strip().lower()
-            if k not in {"locked_gate", "npc_locked_gate"}:
+            if k not in allowed:
                 continue
             first = str(value or "").split(",", 1)[0].strip()
             try:
@@ -4029,8 +4034,11 @@ def open_savegame_editor(self):
 
     def _set_pending_locked_ids(locked_ids: set[int]) -> None:
         clean = set(int(v) for v in locked_ids if int(v) > 0)
-        state["locked_ids"] = clean
-        map_state["locked_ids"] = set(clean)
+        readonly = set(int(v) for v in set(state.get("locked_readonly_ids", set()) or set()) if int(v) > 0)
+        player_only = clean.difference(readonly)
+        state["locked_player_ids"] = set(player_only)
+        state["locked_ids"] = set(player_only)
+        _render_known_objects_map(set(player_only) | readonly)
 
     def _set_pending_visit_ids(visit_ids: set[int]) -> None:
         clean = set(int(v) for v in visit_ids if int(v) > 0)
@@ -4937,17 +4945,20 @@ def open_savegame_editor(self):
             houses.sort(key=lambda x: x[0].lower())
             _set_houses(houses)
             _set_loading_progress(82, _tr_or("savegame_editor.loading_phase.map", "Building maps"))
-            locked_ids = _locked_gate_ids_from_lines(player_lines)
+            player_locked_ids = _locked_gate_ids_from_lines(player_lines, {"locked_gate"})
+            readonly_locked_ids: set[int] = set()
             locked_bounds = self._find_ini_section_bounds(lines, "locked_gates", None)
             if locked_bounds is not None:
                 ls, le = locked_bounds
-                locked_ids.update(_locked_gate_ids_from_lines(lines[ls:le]))
+                readonly_locked_ids = _locked_gate_ids_from_lines(lines[ls:le])
             visit_ids = _visit_ids_from_lines(player_lines)
-            state["locked_ids"] = set(locked_ids)
+            state["locked_player_ids"] = set(player_locked_ids)
+            state["locked_readonly_ids"] = set(readonly_locked_ids)
+            state["locked_ids"] = set(player_locked_ids)
             state["visit_ids"] = set(visit_ids)
             state["visit_line_by_id"] = _visit_line_map_from_lines(player_lines)
             state["original_player_values"] = dict(original_player_values)
-            _set_pending_locked_ids(set(locked_ids))
+            _set_pending_locked_ids(set(player_locked_ids))
             _set_pending_visit_ids(set(visit_ids))
             _set_loading_progress(92, _tr_or("savegame_editor.loading_phase.story", "Checking story state"))
             story_mission_num = 0
@@ -6679,6 +6690,5 @@ def _standalone_ensure_paths(host: _SavegameEditorHost) -> bool:
 
 if __name__ == "__main__":
     raise SystemExit(run_standalone())
-
 
 
