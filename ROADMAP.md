@@ -1,6 +1,6 @@
 # FL Atlas - Savegame Editor Roadmap
 
-## Current Status (v0.1.3)
+## Current Status (v0.1.4)
 - Standalone savegame editor is stable with:
   - conventional menu bar
   - path settings
@@ -20,9 +20,13 @@
 - Startup is faster because game data loads lazily.
 - Story-save protection blocks risky system/base writes conservatively.
 - Ship editing is split into dedicated core/equip/cargo subtabs.
+- Better search/filter support is available across combo-heavy editors.
+- Backup restore preview is more resilient on very large savegames.
 - Incompatible save entries stay visible as locked read-only rows instead of breaking the editor.
+- Incompatible `rep_group` values are preserved when applying reputation templates.
 - Encrypted `FLS1` saves are preserved by default and shown with an in-editor notice.
 - Costume-based Trent saves stay in their original format and lock Trent customization safely.
+- Locked-gate handling now keeps `[locked_gates]` / `npc_locked_gate` data out of the writable `[Player]` lock list.
 
 ## Release Readiness
 - Packaging assets are present:
@@ -44,22 +48,18 @@
   - current file that will be replaced
 - Tighten save safety around location-sensitive fields beyond system/base if needed.
 
-## Next Release Goals (v0.1.4)
+## Next Release Goals (v0.1.5)
 - Undo/Redo for the in-memory editing session
-- Better search/filter support for combo-heavy editors
 - Clearer diff preview before save with categorized sections
-- Improved backup restore preview for very large files
-- Preserve incompatible `rep_group` values when applying reputation templates
+- Regression coverage for savegame lock/visit serialization
+- Stronger guardrails for map actions that should not rewrite read-only lock sections
 
 ## Mid-Term Goals (v0.2.x)
 - Batch tools for cargo and equipment edits
 - Savegame compare mode between two `.fl` files
-- Safer advanced relocation workflow for non-story saves
-- Optional background loading for expensive editor lookups
-- Better validation diagnostics for unresolved numeric IDs
 
 ## Long-Term Goals
 - Exportable crash-report package for bug reports
 - Automated release pipeline for Windows and Linux artifacts
 - Backup browser with metadata and restore points
-- Expert mode for advanced save manipulation with stronger guardrails
+
