@@ -2104,7 +2104,6 @@ def open_savegame_editor(self):
     ship_tab_l.setContentsMargins(8, 8, 8, 8)
     ship_tab_l.setSpacing(8)
     right_tabs.addTab(tab_visited, tr("savegame_editor.map_tab.visited"))
-    right_tabs.addTab(tab_locked, tr("savegame_editor.map_tab.locked"))
     right_tabs.addTab(tab_reputation, tr("savegame_editor.tab.reputation"))
     right_tabs.addTab(tab_trent, tr("savegame_editor.tab.trent"))
     right_tabs.addTab(tab_ship, tr("savegame_editor.tab.ship"))
@@ -2161,20 +2160,8 @@ def open_savegame_editor(self):
     sidebar_l.addWidget(validate_help_lbl)
     sidebar_l.addStretch(1)
 
-    locked_map_l = QVBoxLayout(tab_locked)
-    locked_map_l.setContentsMargins(0, 0, 0, 0)
-    locked_map_l.setSpacing(6)
     locked_scene = QGraphicsScene(tab_locked)
     locked_view = _SavegameKnownMapView(locked_scene, tab_locked)
-    locked_view.setRenderHint(QPainter.Antialiasing, True)
-    locked_view.setMinimumHeight(240)
-    locked_view.setStyleSheet("QGraphicsView { border: 1px solid palette(mid); }")
-    locked_map_l.addWidget(locked_view, 1)
-    locked_legend = QLabel(_tr_or("savegame_editor.legend.locked", "Gray: inactive  Red: locked"), tab_locked)
-    locked_legend.setStyleSheet("color: #9aa0a6;")
-    locked_map_l.addWidget(locked_legend)
-    unlock_all_btn = QPushButton(tr("savegame_editor.unlock_all"), tab_locked)
-    locked_map_l.addWidget(unlock_all_btn, 0, Qt.AlignRight)
     visited_map_l = QVBoxLayout(tab_visited)
     visited_map_l.setContentsMargins(0, 0, 0, 0)
     visited_map_l.setSpacing(6)
@@ -2192,8 +2179,10 @@ def open_savegame_editor(self):
     visited_map_l.addWidget(visited_legend)
     visited_btn_row = QHBoxLayout()
     visited_btn_row.addStretch(1)
+    unlock_all_btn = QPushButton(tr("savegame_editor.unlock_all"), tab_visited)
     visit_unlock_all_btn = QPushButton(tr("savegame_editor.visit_unlock_all"), tab_visited)
     visit_reveal_all_btn = QPushButton(tr("savegame_editor.visit_reveal_all"), tab_visited)
+    visited_btn_row.addWidget(unlock_all_btn)
     visited_btn_row.addWidget(visit_unlock_all_btn)
     visited_btn_row.addWidget(visit_reveal_all_btn)
     visited_map_l.addLayout(visited_btn_row)
@@ -2239,7 +2228,6 @@ def open_savegame_editor(self):
     def _apply_map_theme(theme_name: str) -> None:
         nonlocal map_colors
         map_colors = _map_colors_for_theme(theme_name)
-        locked_scene.setBackgroundBrush(QBrush(map_colors["bg"]))
         visited_scene.setBackgroundBrush(QBrush(map_colors["bg"]))
 
     _apply_map_theme(self._cfg.get("settings.theme", "Dark"))
@@ -2554,14 +2542,10 @@ def open_savegame_editor(self):
         _refresh_houses_table_filter()
 
     def _clear_maps() -> None:
-        locked_scene.clear()
         visited_scene.clear()
         empty = QRectF(0, 0, 1, 1)
-        locked_scene.setSceneRect(empty)
         visited_scene.setSceneRect(empty)
-        locked_view.set_base_rect(empty)
         visited_view.set_base_rect(empty)
-        map_state["locked_ids"] = set()
         map_state["visit_ids"] = set()
 
     def _set_no_savegame_state() -> None:
@@ -3967,83 +3951,6 @@ def open_savegame_editor(self):
         return out
 
     def _render_known_objects_map(locked_ids: set[int]) -> None:
-        locked_scene.clear()
-        systems_obj = dict(jump_data.get("systems", {}) or {})
-        edges = list(jump_data.get("edges", []) or [])
-        if not systems_obj or not edges:
-            txt = locked_scene.addText(tr("savegame_editor.ids_none"))
-            txt.setDefaultTextColor(map_colors["text_empty"])
-            locked_view.set_base_rect(locked_scene.itemsBoundingRect().adjusted(-12, -12, 12, 12))
-            return
-        positions: dict[str, tuple[float, float]] = {}
-        xs: list[float] = []
-        ys: list[float] = []
-        for key, row in systems_obj.items():
-            x = float(row.get("x", 0.0) or 0.0)
-            y = float(row.get("y", 0.0) or 0.0)
-            positions[str(key).upper()] = (x, y)
-            xs.append(x)
-            ys.append(y)
-        if not xs or not ys:
-            txt = locked_scene.addText(tr("savegame_editor.ids_none"))
-            txt.setDefaultTextColor(map_colors["text_empty"])
-            return
-        min_x = min(xs)
-        max_x = max(xs)
-        min_y = min(ys)
-        max_y = max(ys)
-        w = max(1.0, max_x - min_x)
-        h = max(1.0, max_y - min_y)
-        scale = min(900.0 / w, 520.0 / h)
-        node_pos: dict[str, QPointF] = {}
-        for key, (x, y) in positions.items():
-            sx = (x - min_x) * scale
-            sy = (y - min_y) * scale
-            node_pos[key] = QPointF(sx, sy)
-
-        locked_systems: set[str] = set()
-        for edge in edges:
-            ids = [int(v) for v in list(edge.get("ids", []) or []) if int(v) > 0]
-            if any(i in locked_ids for i in ids):
-                locked_systems.add(str(edge.get("a", "")).upper())
-                locked_systems.add(str(edge.get("b", "")).upper())
-
-        for edge in edges:
-            a = str(edge.get("a", "")).upper()
-            b = str(edge.get("b", "")).upper()
-            if a not in node_pos or b not in node_pos:
-                continue
-            ids = [int(v) for v in list(edge.get("ids", []) or []) if int(v) > 0]
-            is_locked = any(i in locked_ids for i in ids)
-            typ = str(edge.get("type", "hole") or "hole").lower()
-            if is_locked:
-                col = map_colors["line_locked"]
-                width = 2.4
-            else:
-                col = map_colors["line_inactive"]
-                width = 1.3
-            pen = QPen(col, width)
-            pen.setCosmetic(True)
-            locked_scene.addLine(node_pos[a].x(), node_pos[a].y(), node_pos[b].x(), node_pos[b].y(), pen)
-
-        for key, pt in node_pos.items():
-            row = dict(systems_obj.get(key, {}) or {})
-            nick = str(row.get("nickname", key) or key)
-            disp = str(row.get("display", nick) or nick)
-            r = 7.0 if key in locked_systems else 5.0
-            fill = map_colors["node_locked"] if key in locked_systems else map_colors["node_inactive"]
-            pen = QPen(map_colors["node_outline"], 1.0)
-            pen.setCosmetic(True)
-            node = locked_scene.addEllipse(pt.x() - r, pt.y() - r, r * 2.0, r * 2.0, pen, QBrush(fill))
-            node.setData(0, key)
-            label = locked_scene.addText(disp)
-            label.setDefaultTextColor(map_colors["text_locked"] if key in locked_systems else map_colors["text_inactive"])
-            label.setPos(pt.x() + 8.0, pt.y() - 10.0)
-            label.setData(0, key)
-
-        rect = locked_scene.itemsBoundingRect().adjusted(-24, -24, 24, 24)
-        locked_scene.setSceneRect(rect)
-        locked_view.set_base_rect(rect)
         map_state["locked_ids"] = set(int(v) for v in locked_ids if int(v) > 0)
 
     def _render_visited_map(visit_ids: set[int]) -> None:
@@ -4115,7 +4022,6 @@ def open_savegame_editor(self):
             label = visited_scene.addText(disp)
             label.setDefaultTextColor(map_colors["text_current"] if is_current else (map_colors["text_visited"] if is_visited else map_colors["text_inactive"]))
             label.setPos(pt.x() + 8.0, pt.y() - 10.0)
-            label.setData(0, key)
         rect = visited_scene.itemsBoundingRect().adjusted(-24, -24, 24, 24)
         visited_scene.setSceneRect(rect)
         visited_view.set_base_rect(rect)
@@ -4124,7 +4030,7 @@ def open_savegame_editor(self):
     def _set_pending_locked_ids(locked_ids: set[int]) -> None:
         clean = set(int(v) for v in locked_ids if int(v) > 0)
         state["locked_ids"] = clean
-        _render_known_objects_map(clean)
+        map_state["locked_ids"] = set(clean)
 
     def _set_pending_visit_ids(visit_ids: set[int]) -> None:
         clean = set(int(v) for v in visit_ids if int(v) > 0)
@@ -4515,7 +4421,7 @@ def open_savegame_editor(self):
             story_lock_lbl.setVisible(False)
 
     def _ensure_system_item(system_nick: str) -> None:
-        sys_nick = str(system_nick or "").strip()
+        sys_nick = _resolve_system_nick(system_nick)
         if not sys_nick:
             return
         idx = system_cb.findData(sys_nick)
@@ -4527,7 +4433,21 @@ def open_savegame_editor(self):
         system_cb.addItem(sys_label, sys_nick)
         system_cb.setCurrentIndex(system_cb.count() - 1)
 
+    def _resolve_system_nick(system_nick: str) -> str:
+        sys_nick = str(system_nick or "").strip()
+        if not sys_nick:
+            return ""
+        if sys_nick in system_to_bases:
+            return sys_nick
+        want = sys_nick.upper()
+        for key in system_to_bases.keys():
+            candidate = str(key or "").strip()
+            if candidate.upper() == want:
+                return candidate
+        return sys_nick
+
     def _rebuild_base_combo(system_nick: str, preferred_base: str = "") -> None:
+        system_nick = _resolve_system_nick(system_nick)
         pref = str(preferred_base or "").strip()
         base_cb.blockSignals(True)
         base_cb.clear()
@@ -4548,6 +4468,26 @@ def open_savegame_editor(self):
         elif base_cb.count() > 0:
             base_cb.setCurrentIndex(0)
         base_cb.blockSignals(False)
+
+    def _select_system_from_map(system_nick: str) -> None:
+        sys_nick = _resolve_system_nick(system_nick)
+        if not sys_nick:
+            return
+        rows = list(system_to_bases.get(sys_nick, []) or [])
+        first_base = str(rows[0].get("nickname", "") or "").strip() if rows else ""
+        if not first_base:
+            QMessageBox.warning(
+                dlg,
+                tr("savegame_editor.title"),
+                _tr_or(
+                    "savegame_editor.system_no_base",
+                    "This system has no base entry and cannot be selected from the map.",
+                ),
+            )
+            return
+        _ensure_system_item(sys_nick)
+        _rebuild_base_combo(sys_nick, preferred_base=first_base)
+        _update_current_system_marker()
 
     def _set_rep_group_value(rep_group: str) -> None:
         rep = str(rep_group or "").strip()
@@ -4783,6 +4723,7 @@ def open_savegame_editor(self):
         righthand = ""
         costume = ""
         ship_archetype = ""
+        location = ""
         core_components: dict[str, tuple[str, str]] = {
             "power": ("", "1"),
             "engine": ("", "1"),
@@ -4826,6 +4767,9 @@ def open_savegame_editor(self):
             elif k == "base":
                 base = v
                 original_player_values["base"] = v
+            elif k == "location":
+                location = v
+                original_player_values["location"] = v
             elif k == "com_body":
                 com_body = v
                 original_player_values["com_body"] = v
@@ -4994,6 +4938,10 @@ def open_savegame_editor(self):
             _set_houses(houses)
             _set_loading_progress(82, _tr_or("savegame_editor.loading_phase.map", "Building maps"))
             locked_ids = _locked_gate_ids_from_lines(player_lines)
+            locked_bounds = self._find_ini_section_bounds(lines, "locked_gates", None)
+            if locked_bounds is not None:
+                ls, le = locked_bounds
+                locked_ids.update(_locked_gate_ids_from_lines(lines[ls:le]))
             visit_ids = _visit_ids_from_lines(player_lines)
             state["locked_ids"] = set(locked_ids)
             state["visit_ids"] = set(visit_ids)
@@ -5859,6 +5807,10 @@ def open_savegame_editor(self):
             player, _ = self._set_single_key_line_in_section(player, "rep_group", f"rep_group = {rep_group_out}")
         else:
             player = _drop_single_key(player, "rep_group")
+        location_changed = (
+            str(orig_system or "").strip().lower() != str(new_system or "").strip().lower()
+            or str(orig_base or "").strip().lower() != str(new_base or "").strip().lower()
+        )
         player, _ = self._set_single_key_line_in_section(
             player, "system", f"system = {_saved_single_value('system', new_system, system_cb)}"
         )
@@ -5867,6 +5819,12 @@ def open_savegame_editor(self):
             player, _ = self._set_single_key_line_in_section(player, "base", f"base = {base_out}")
         else:
             player = _drop_single_key(player, "base")
+        if location_changed:
+            player = _drop_single_key(player, "location")
+        else:
+            location_out = str(original_player_values.get("location", "") or "").strip()
+            if location_out:
+                player, _ = self._set_single_key_line_in_section(player, "location", f"location = {location_out}")
         if bool(state.get("trent_costume_locked", False)):
             for trent_key in ("com_body", "com_head", "com_lefthand", "com_righthand", "body", "head", "lefthand", "righthand", "costume", "com_costume"):
                 player = _preserve_or_drop_trent_key(player, trent_key)
@@ -6489,7 +6447,6 @@ def open_savegame_editor(self):
             dlg.setUpdatesEnabled(True)
             dlg.update()
         _apply_map_theme(tname)
-        _render_known_objects_map(set(state.get("locked_ids", set()) or set()))
         _render_visited_map(set(state.get("visit_ids", set()) or set()))
         self._cfg.set("settings.theme", tname)
         current_theme = tname
@@ -6510,7 +6467,7 @@ def open_savegame_editor(self):
             act.setChecked(name == current_theme)
         except Exception:
             pass
-    locked_view.on_system_click = _unlock_system_connections
+    visited_view.on_system_click = _select_system_from_map
 
     _refresh_savegame_list(auto_load=False)
     _set_no_savegame_state()
