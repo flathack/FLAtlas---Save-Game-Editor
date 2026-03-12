@@ -1,6 +1,6 @@
 # FL Atlas - Savegame Editor Roadmap
 
-## Current Status (v0.1.4)
+## Current Status (v0.1.5)
 - Standalone savegame editor is stable with:
   - conventional menu bar
   - path settings
@@ -48,7 +48,7 @@
   - current file that will be replaced
 - Tighten save safety around location-sensitive fields beyond system/base if needed.
 
-## Next Release Goals (v0.1.5)
+## Next Release Goals (v0.1.6)
 - Undo/Redo for the in-memory editing session
 - Clearer diff preview before save with categorized sections
 - Regression coverage for savegame lock/visit serialization

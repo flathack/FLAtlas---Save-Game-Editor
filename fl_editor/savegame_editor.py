@@ -2476,6 +2476,7 @@ def open_savegame_editor(self):
         "locked_ids": set(),
         "locked_player_ids": set(),
         "locked_readonly_ids": set(),
+        "lock_line_by_id": {},
         "visit_ids": set(),
         "visit_line_by_id": {},
         "original_player_values": {},
@@ -2555,6 +2556,7 @@ def open_savegame_editor(self):
         state["locked_ids"] = set()
         state["locked_player_ids"] = set()
         state["locked_readonly_ids"] = set()
+        state["lock_line_by_id"] = {}
         state["visit_ids"] = set()
         state["visit_line_by_id"] = {}
         state["original_player_values"] = {}
@@ -3916,6 +3918,27 @@ def open_savegame_editor(self):
                 out.add(int(hid))
         return out
 
+    def _locked_gate_line_map_from_lines(lines: list[str], allowed_keys: set[str] | None = None) -> dict[int, str]:
+        out: dict[int, str] = {}
+        allowed = {str(v).strip().lower() for v in set(allowed_keys or {"locked_gate", "npc_locked_gate"}) if str(v).strip()}
+        for raw_line in lines:
+            line = str(raw_line or "")
+            core = line.split(";", 1)[0].strip()
+            if not core or "=" not in core:
+                continue
+            key, value = core.split("=", 1)
+            k = str(key or "").strip().lower()
+            if k not in allowed:
+                continue
+            first = str(value or "").split(",", 1)[0].strip()
+            try:
+                hid = int(first)
+            except Exception:
+                continue
+            if hid > 0 and hid not in out:
+                out[int(hid)] = line.strip()
+        return out
+
     def _visit_ids_from_lines(lines: list[str]) -> set[int]:
         out: set[int] = set()
         for raw_line in lines:
@@ -4945,7 +4968,8 @@ def open_savegame_editor(self):
             houses.sort(key=lambda x: x[0].lower())
             _set_houses(houses)
             _set_loading_progress(82, _tr_or("savegame_editor.loading_phase.map", "Building maps"))
-            player_locked_ids = _locked_gate_ids_from_lines(player_lines, {"locked_gate"})
+            player_locked_ids = _locked_gate_ids_from_lines(player_lines, {"locked_gate", "npc_locked_gate"})
+            player_lock_line_by_id = _locked_gate_line_map_from_lines(player_lines, {"locked_gate", "npc_locked_gate"})
             readonly_locked_ids: set[int] = set()
             locked_bounds = self._find_ini_section_bounds(lines, "locked_gates", None)
             if locked_bounds is not None:
@@ -4955,6 +4979,7 @@ def open_savegame_editor(self):
             state["locked_player_ids"] = set(player_locked_ids)
             state["locked_readonly_ids"] = set(readonly_locked_ids)
             state["locked_ids"] = set(player_locked_ids)
+            state["lock_line_by_id"] = dict(player_lock_line_by_id)
             state["visit_ids"] = set(visit_ids)
             state["visit_line_by_id"] = _visit_line_map_from_lines(player_lines)
             state["original_player_values"] = dict(original_player_values)
@@ -6004,8 +6029,19 @@ def open_savegame_editor(self):
 
         pending_locked = sorted(int(v) for v in set(state.get("locked_ids", set()) or set()) if int(v) > 0)
         pending_visit = sorted(int(v) for v in set(state.get("visit_ids", set()) or set()) if int(v) > 0)
+        lock_line_by_id = dict(state.get("lock_line_by_id", {}) or {})
         visit_line_by_id = dict(state.get("visit_line_by_id", {}) or {})
-        lock_lines = [f"locked_gate = {hid}" for hid in pending_locked]
+        lock_lines: list[str] = []
+        for hid in pending_locked:
+            raw_lock = str(lock_line_by_id.get(int(hid), "") or "").strip()
+            if raw_lock:
+                core = raw_lock.split(";", 1)[0].strip()
+                if core and "=" in core:
+                    raw_key = str(core.split("=", 1)[0] or "").strip().lower()
+                    if raw_key in {"locked_gate", "npc_locked_gate"}:
+                        lock_lines.append(f"{raw_key} = {hid}")
+                        continue
+            lock_lines.append(f"locked_gate = {hid}")
         visit_lines: list[str] = []
         for hid in pending_visit:
             raw_v = str(visit_line_by_id.get(int(hid), "") or "").strip() or f"{int(hid)}, 1"

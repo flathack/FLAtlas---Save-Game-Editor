@@ -5,7 +5,7 @@ Standalone editor for **Freelancer** singleplayer save files (`*.fl`).
 Developed by **Aldenmar Odin - flathack**.
 
 ## Version
-- Current: `v0.1.3`
+- Current: `v0.1.5`
 
 ## Core Features
 - Open and edit Freelancer savegames with `filename - in-game name` display

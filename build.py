@@ -45,6 +45,30 @@ def _build_data_args(sep: str) -> list[str]:
     return args
 
 
+def _assert_no_config_in_dist(dist_path: Path, app_name: str) -> None:
+    package_root = dist_path / app_name
+    if not package_root.exists():
+        return
+    blocked_names = {
+        "config.json",
+        ".fl_editor",
+        "fl_editor.ini",
+    }
+    blocked_parts = {
+        "appdata",
+        ".config",
+    }
+    bad_paths: list[Path] = []
+    for path in package_root.rglob("*"):
+        low_name = path.name.lower()
+        low_parts = {part.lower() for part in path.parts}
+        if low_name in blocked_names or blocked_parts.intersection(low_parts):
+            bad_paths.append(path)
+    if bad_paths:
+        lines = "\n".join(str(p) for p in bad_paths[:20])
+        raise RuntimeError(f"Build contains config artifacts and is not releasable:\n{lines}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Build FLAtlas Savegame Editor")
     ap.add_argument(
@@ -104,6 +128,7 @@ def main() -> int:
         return proc.returncode
 
     dist_path = PROJECT_ROOT / "dist"
+    _assert_no_config_in_dist(dist_path, app_name)
     print(f"Build completed: {dist_path}")
     return 0
 
