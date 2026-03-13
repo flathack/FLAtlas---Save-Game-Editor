@@ -1201,30 +1201,87 @@ class _SavegameEditorHost(QMainWindow):
         return int(h)
 
     def _savegame_editor_load_faction_labels(self, game_path: str = "") -> dict[str, str]:
-        groups: list[tuple[str, str]] = []
+        groups_by_nick: dict[str, str] = {}
         roots = [str(game_path or "").strip(), str(self._primary_game_path() or "").strip(), str(self._fallback_game_path() or "").strip()]
         seen_root: set[str] = set()
         for root in roots:
             if not root or root.lower() in seen_root:
                 continue
             seen_root.add(root.lower())
-            iw_file = self._resolve_game_path_case_insensitive(root, "DATA/initialworld.ini")
-            if not iw_file or not iw_file.exists():
-                continue
+            for nick, ids_name in self._collect_faction_group_rows(root):
+                nick_key = str(nick or "").strip().lower()
+                if not nick_key:
+                    continue
+                existing = str(groups_by_nick.get(nick_key, "") or "").strip()
+                incoming = str(ids_name or "").strip()
+                if existing and not incoming:
+                    continue
+                groups_by_nick[nick_key] = incoming
+        groups = sorted(((nick, ids_name) for nick, ids_name in groups_by_nick.items()), key=lambda item: item[0].lower())
+        if groups:
+            self._build_faction_label_cache(groups, game_path=game_path)
+        else:
+            self._build_faction_label_cache([], game_path=game_path)
+        return {nick.strip().lower(): self._faction_ui_label(nick) for nick in self._cached_factions if nick.strip()}
+
+    def _collect_faction_group_rows(self, game_path: str) -> list[tuple[str, str]]:
+        out_by_nick: dict[str, str] = {}
+        initialworld_path = self._resolve_game_path_case_insensitive(game_path, "DATA/initialworld.ini")
+        if initialworld_path and initialworld_path.is_file():
             try:
-                for sec_name, entries in self._parser.parse(str(iw_file)):
+                for sec_name, entries in self._parser.parse(str(initialworld_path)):
                     if str(sec_name).strip().lower() != "group":
                         continue
                     nick = self._entry_get_value(entries, "nickname").strip()
                     ids_name = self._entry_get_value(entries, "ids_name").strip()
-                    if nick and all(nick.lower() != n.lower() for n, _ in groups):
-                        groups.append((nick, ids_name))
+                    self._remember_faction_group_row(out_by_nick, nick, ids_name)
+                    for key, value in entries:
+                        if str(key or "").strip().lower() != "rep":
+                            continue
+                        parts = [part.strip() for part in str(value or "").split(",")]
+                        if len(parts) < 2:
+                            continue
+                        self._remember_faction_group_row(out_by_nick, parts[-1], "")
+            except Exception:
+                pass
+
+        for rel_path in ("DATA/MISSIONS/faction_prop.ini", "DATA/MISSIONS/MBASES.ini"):
+            ini_path = self._resolve_game_path_case_insensitive(game_path, rel_path)
+            if not ini_path or not ini_path.is_file():
+                continue
+            try:
+                for sec_name, entries in self._parser.parse(str(ini_path)):
+                    section_name = str(sec_name or "").strip().lower()
+                    for key, value in entries:
+                        key_name = str(key or "").strip().lower()
+                        text = str(value or "").strip()
+                        if not text:
+                            continue
+                        if rel_path.lower().endswith("faction_prop.ini") and section_name == "factionprops" and key_name == "affiliation":
+                            self._remember_faction_group_row(out_by_nick, text, "")
+                        elif rel_path.lower().endswith("mbases.ini"):
+                            if key_name in {"affiliation", "faction", "local_faction"}:
+                                self._remember_faction_group_row(out_by_nick, text, "")
+                            elif key_name == "bribe":
+                                parts = [part.strip() for part in text.split(",")]
+                                if parts:
+                                    self._remember_faction_group_row(out_by_nick, parts[0], "")
             except Exception:
                 continue
-        groups.sort(key=lambda x: x[0].lower())
-        if groups:
-            self._build_faction_label_cache(groups, game_path=game_path)
-        return {nick.strip().lower(): self._faction_ui_label(nick) for nick in self._cached_factions if nick.strip()}
+
+        return [(nick, ids_name) for nick, ids_name in out_by_nick.items()]
+
+    @staticmethod
+    def _remember_faction_group_row(target: dict[str, str], nickname: str, ids_name: str) -> None:
+        nick = str(nickname or "").strip()
+        if not nick or not nick.lower().endswith("_grp"):
+            return
+        key = nick.lower()
+        incoming_ids = str(ids_name or "").strip()
+        existing_ids = str(target.get(key, "") or "").strip()
+        if existing_ids and not incoming_ids:
+            return
+        target[key] = incoming_ids
 
     def _savegame_editor_collect_rep_templates(self, game_path: str = "") -> list[dict[str, object]]:
         templates: list[dict[str, object]] = []
@@ -1277,7 +1334,16 @@ class _SavegameEditorHost(QMainWindow):
             templates.append({"name": "NEUTRAL", "faction": "", "houses": neutral_houses})
         for nick in sorted(rep_by_faction.keys(), key=str.lower):
             label = self._faction_ui_label(nick).strip() or nick
-            templates.append({"name": label, "faction": nick, "houses": dict(rep_by_faction.get(nick, {}))})
+            houses = {fac: 0.0 for fac in sorted(all_factions, key=str.lower)}
+            houses.update(dict(rep_by_faction.get(nick, {})))
+            templates.append({"name": label, "faction": nick, "houses": houses})
+        for nick in sorted(all_factions, key=str.lower):
+            if nick in rep_by_faction:
+                continue
+            default_houses = {fac: 0.0 for fac in sorted(all_factions, key=str.lower)}
+            default_houses[nick] = 0.91
+            label = self._faction_ui_label(nick).strip() or nick
+            templates.append({"name": label, "faction": nick, "houses": default_houses})
         return templates
 
     def _npc_collect_bases(self, game_path: str) -> list[dict[str, str]]:
