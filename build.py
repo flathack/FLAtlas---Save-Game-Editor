@@ -11,6 +11,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 ENTRYPOINT = PROJECT_ROOT / "start_savegame_editor.py"
+UPDATER_SCRIPT = PROJECT_ROOT / "fleditor_updater.py"
 ICON_FILE = PROJECT_ROOT / "fl_editor" / "images" / "icon.png"
 ICON_ICO_FILE = PROJECT_ROOT / "fl_editor" / "images" / "icon.ico"
 
@@ -126,6 +127,33 @@ def main() -> int:
     proc = subprocess.run(pyinstaller_cmd, cwd=str(PROJECT_ROOT))
     if proc.returncode != 0:
         return proc.returncode
+
+    # Build the standalone updater exe
+    if UPDATER_SCRIPT.exists() and args.mode == "onedir":
+        updater_cmd = [
+            sys.executable,
+            "-m",
+            "PyInstaller",
+            "--noconfirm",
+            "--clean",
+            "--name",
+            "FLEditorUpdater",
+            "--onefile",
+            "--windowed",
+        ]
+        if icon_for_exe is not None:
+            updater_cmd.extend(["--icon", str(icon_for_exe)])
+        updater_cmd.append(str(UPDATER_SCRIPT))
+        print("Building updater:", " ".join(updater_cmd))
+        proc2 = subprocess.run(updater_cmd, cwd=str(PROJECT_ROOT))
+        if proc2.returncode != 0:
+            print("Warning: updater build failed", file=sys.stderr)
+        else:
+            updater_exe = PROJECT_ROOT / "dist" / "FLEditorUpdater.exe"
+            target_dir = PROJECT_ROOT / "dist" / app_name
+            if updater_exe.exists() and target_dir.exists():
+                shutil.copy2(updater_exe, target_dir / "FLEditorUpdater.exe")
+                print(f"Updater copied to {target_dir / 'FLEditorUpdater.exe'}")
 
     dist_path = PROJECT_ROOT / "dist"
     _assert_no_config_in_dist(dist_path, app_name)

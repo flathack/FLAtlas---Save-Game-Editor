@@ -5,7 +5,7 @@ Standalone editor for **Freelancer** singleplayer save files (`*.fl`).
 Developed by **Aldenmar Odin - flathack**.
 
 ## Version
-- Current: `v0.1.5`
+- Current: `v0.2.0`
 
 ## Core Features
 - Open and edit Freelancer savegames with `filename - in-game name` display
@@ -13,11 +13,13 @@ Developed by **Aldenmar Odin - flathack**.
 - Fast startup with lazy loading of game data
 - `Open Recent` workflow for previously used savegames
 - `Save As...` support for branch saves and experiments
+- **Create new savegame from scratch** with default Trent body parts
 - Safe save workflow with automatic backup history
 - Built-in backup restore dialog with backup list and diff preview
 - Story-save protection for risky `system` / `base` edits
 - Encrypted `FLS1` saves stay encrypted by default when saved again
 - Better compatibility handling for foreign or partially incompatible saves
+- **Auto updater** — download and install updates directly from within the editor
 
 ## Editor Tabs
 - `Visited`
@@ -36,6 +38,7 @@ Developed by **Aldenmar Odin - flathack**.
   - costume-based saves are detected and kept read-only to preserve original `costume` / `com_costume` entries
 - `Ship`
   - ship archetype
+  - **ship templates** — apply pre-configured ship packages from `goods.ini`
   - subtabs for `Core Components`, `Equip Entries`, and `Cargo Entries`
   - core equipment
   - hardpoint-aware equipment editing
@@ -87,6 +90,8 @@ Developed by **Aldenmar Odin - flathack**.
   - `es`
   - `fr`
   - `ru`
+- Online Help (Wiki) accessible directly from the Help menu
+- Complete help documentation available in German and English
 
 ## Requirements
 - Python 3.10+

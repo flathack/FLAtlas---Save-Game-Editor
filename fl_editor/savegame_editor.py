@@ -8,13 +8,17 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import ssl
+import subprocess
 import sys
 import json
 import difflib
 import itertools
+import tempfile
 import threading
 import time
 import webbrowser
+import zipfile
 from urllib import request as urlrequest, error as urlerror
 from pathlib import Path
 
@@ -49,6 +53,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QProgressDialog,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -198,7 +203,7 @@ def _compare_version_tags(left_tag: str, right_tag: str) -> int:
     return 0
 
 
-def _fetch_latest_release() -> dict[str, str] | None:
+def _fetch_latest_release() -> dict[str, object] | None:
     req = urlrequest.Request(
         GITHUB_RELEASES_API,
         headers={
@@ -210,7 +215,12 @@ def _fetch_latest_release() -> dict[str, str] | None:
         with urlrequest.urlopen(req, timeout=5) as resp:
             raw = resp.read()
     except (urlerror.URLError, TimeoutError, OSError):
-        return None
+        try:
+            ctx = ssl._create_unverified_context()
+            with urlrequest.urlopen(req, timeout=5, context=ctx) as resp:
+                raw = resp.read()
+        except Exception:
+            return None
     try:
         data = json.loads(raw.decode("utf-8", errors="ignore"))
     except Exception:
@@ -219,7 +229,7 @@ def _fetch_latest_release() -> dict[str, str] | None:
         return None
     if not data:
         return {}
-    best: dict[str, str] | None = None
+    best: dict[str, object] | None = None
     for row in data:
         if not isinstance(row, dict):
             continue
@@ -228,15 +238,180 @@ def _fetch_latest_release() -> dict[str, str] | None:
         tag = str(row.get("tag_name") or "").strip()
         if not tag:
             continue
-        cand = {
+        assets_raw = row.get("assets") or []
+        assets: list[dict[str, str]] = []
+        if isinstance(assets_raw, list):
+            for a in assets_raw:
+                if isinstance(a, dict):
+                    aname = str(a.get("name", "")).strip()
+                    aurl = str(a.get("browser_download_url", "")).strip()
+                    if aname and aurl:
+                        assets.append({"name": aname, "browser_download_url": aurl})
+        cand: dict[str, object] = {
             "tag": tag,
             "name": str(row.get("name") or tag),
             "url": str(row.get("html_url") or ""),
             "type": "Pre-release" if bool(row.get("prerelease")) else "Release",
+            "assets": assets,
         }
-        if best is None or _is_version_newer(cand["tag"], best["tag"]):
+        if best is None or _is_version_newer(str(cand["tag"]), str(best["tag"])):
             best = cand
     return best
+
+
+def _is_packaged_windows_release() -> bool:
+    """Return True when running as a frozen PyInstaller .exe on Windows."""
+    return getattr(sys, "frozen", False) and sys.platform == "win32"
+
+
+def _select_release_asset(assets: list[dict[str, str]]) -> dict[str, str] | None:
+    """Pick the best asset from a GitHub release for Windows self-update."""
+    zips_win = [a for a in assets if a["name"].lower().endswith(".zip") and re.search(r"win|windows", a["name"], re.I)]
+    if zips_win:
+        return zips_win[0]
+    zips_any = [a for a in assets if a["name"].lower().endswith(".zip")]
+    if zips_any:
+        return zips_any[0]
+    exes = [a for a in assets if a["name"].lower().endswith(".exe") and re.search(r"setup|install|win", a["name"], re.I)]
+    if exes:
+        return exes[0]
+    return None
+
+
+def _download_url_to_file(url: str, dest: Path, *, progress_cb: object = None) -> None:
+    """Download *url* to *dest*, calling *progress_cb(percent)* periodically."""
+    req = urlrequest.Request(url, headers={"User-Agent": "FLAtlas-Savegame-Editor"})
+    try:
+        resp = urlrequest.urlopen(req, timeout=120)
+    except Exception:
+        ctx = ssl._create_unverified_context()
+        resp = urlrequest.urlopen(req, timeout=120, context=ctx)
+    with resp:
+        total = int(resp.headers.get("Content-Length", 0) or 0)
+        downloaded = 0
+        block_size = 1 << 16  # 64 KiB
+        with open(dest, "wb") as fh:
+            while True:
+                chunk = resp.read(block_size)
+                if not chunk:
+                    break
+                fh.write(chunk)
+                downloaded += len(chunk)
+                if progress_cb and total > 0:
+                    progress_cb(int(downloaded * 100 / total))
+
+
+def _start_frozen_windows_self_update(parent: QWidget | None, info: dict[str, object]) -> None:
+    """Download the release asset, extract if needed, launch the updater, and quit."""
+    assets = info.get("assets") or []
+    asset = _select_release_asset(assets)
+    if asset is None:
+        QMessageBox.warning(
+            parent,
+            _tr_or("savegame_editor.update.title", "Updates"),
+            _tr_or("savegame_editor.update.no_asset", "Kein passendes Update-Paket im Release gefunden.\nBitte lade das Update manuell von GitHub herunter."),
+        )
+        return
+
+    download_url = asset["browser_download_url"]
+    asset_name = asset["name"]
+    timestamp = int(time.time())
+    temp_dir = Path(tempfile.gettempdir())
+    archive_path = temp_dir / f"fleditor_update_{timestamp}_{asset_name}"
+
+    progress = QProgressDialog(
+        _tr_or("savegame_editor.update.download_progress", "Update wird heruntergeladen… {percent}%").format(percent=0),
+        "",
+        0,
+        100,
+        parent,
+    )
+    progress.setWindowTitle(_tr_or("savegame_editor.update.title", "Updates"))
+    progress.setCancelButton(None)
+    progress.setMinimumDuration(0)
+    progress.setAutoClose(True)
+    progress.show()
+    QApplication.processEvents()
+
+    def _update_progress(pct: int) -> None:
+        progress.setValue(pct)
+        progress.setLabelText(
+            _tr_or("savegame_editor.update.download_progress", "Update wird heruntergeladen… {percent}%").format(percent=pct)
+        )
+        QApplication.processEvents()
+
+    try:
+        _download_url_to_file(download_url, archive_path, progress_cb=_update_progress)
+    except Exception as exc:
+        progress.close()
+        QMessageBox.critical(
+            parent,
+            _tr_or("savegame_editor.update.title", "Updates"),
+            _tr_or("savegame_editor.update.download_failed", "Der Download des Updates ist fehlgeschlagen:\n{error}").format(error=exc),
+        )
+        return
+    progress.close()
+
+    is_zip = asset_name.lower().endswith(".zip")
+    mode = "zip" if is_zip else "installer"
+    extract_root: Path | None = None
+
+    if is_zip:
+        extract_root = temp_dir / f"fleditor_update_extract_{timestamp}"
+        try:
+            with zipfile.ZipFile(archive_path, "r") as zf:
+                zf.extractall(extract_root)
+        except Exception as exc:
+            QMessageBox.critical(
+                parent,
+                _tr_or("savegame_editor.update.title", "Updates"),
+                _tr_or("savegame_editor.update.extract_failed", "Das Entpacken des Updates ist fehlgeschlagen:\n{error}").format(error=exc),
+            )
+            return
+
+    exe_path = Path(sys.executable).resolve()
+    install_root = exe_path.parent
+    updater_name = "FLEditorUpdater.exe"
+    updater_exe = install_root / updater_name
+    if not updater_exe.exists():
+        updater_exe = install_root / "_internal" / updater_name
+
+    cmd_parts = [
+        f'"{updater_exe}"',
+        f"--mode {mode}",
+        f"--wait-pid {os.getpid()}",
+        f'--install-root "{install_root}"',
+        f'--archive-path "{archive_path}"',
+        f'--exe-path "{exe_path}"',
+    ]
+    if extract_root is not None:
+        cmd_parts.append(f'--extract-root "{extract_root}"')
+
+    cmd_script = temp_dir / f"fleditor_update_{timestamp}.cmd"
+    cmd_script.write_text(
+        "@echo off\n"
+        f"timeout /t 2 /nobreak >nul\n"
+        f"{' '.join(cmd_parts)}\n"
+        f'del "%~f0"\n',
+        encoding="utf-8",
+    )
+
+    _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        subprocess.Popen(
+            ["cmd.exe", "/c", str(cmd_script)],
+            creationflags=_CREATE_NO_WINDOW,
+            close_fds=True,
+        )
+    except Exception:
+        QMessageBox.critical(
+            parent,
+            _tr_or("savegame_editor.update.title", "Updates"),
+            _tr_or("savegame_editor.update.launch_failed", "Das Update wurde heruntergeladen, konnte aber nicht automatisch gestartet werden.\nBitte starte das Programm manuell neu."),
+        )
+        return
+
+    QTimer.singleShot(150, QApplication.instance().quit)
 
 
 def _show_release_status_dialog(
@@ -246,8 +421,9 @@ def _show_release_status_dialog(
     headline: str,
     body: str,
     tone: str = "info",
-    latest: dict[str, str] | None = None,
+    latest: dict[str, object] | None = None,
     show_open_button: bool = False,
+    show_install_button: bool = False,
 ) -> None:
     dlg = QDialog(parent)
     dlg.setModal(True)
@@ -335,6 +511,10 @@ def _show_release_status_dialog(
 
     button_row = QHBoxLayout()
     button_row.addStretch(1)
+    install_btn = None
+    if show_install_button and isinstance(latest, dict):
+        install_btn = QPushButton(_tr_or("savegame_editor.update.install", "Update installieren"), dlg)
+        button_row.addWidget(install_btn)
     open_btn = None
     if show_open_button and isinstance(latest, dict) and str(latest.get("url", "")).strip():
         open_btn = QPushButton(_tr_or("savegame_editor.update.open", "Open Download"), dlg)
@@ -343,6 +523,12 @@ def _show_release_status_dialog(
     button_row.addWidget(close_btn)
     root.addLayout(button_row)
 
+    if install_btn is not None:
+        def _install_update() -> None:
+            dlg.accept()
+            _start_frozen_windows_self_update(parent, latest)
+
+        install_btn.clicked.connect(_install_update)
     if open_btn is not None:
         def _open_release() -> None:
             url = str(latest.get("url", "") or "").strip()
@@ -413,6 +599,7 @@ def _check_for_updates_popup(parent: QWidget | None = None, *, verbose: bool = F
                 latest=latest,
             )
         return
+    can_self_update = _is_packaged_windows_release() and _select_release_asset(latest.get("assets") or []) is not None
     _show_release_status_dialog(
         parent,
         title=_tr_or("savegame_editor.update.title.available", tr("savegame_editor.update.title")),
@@ -426,6 +613,7 @@ def _check_for_updates_popup(parent: QWidget | None = None, *, verbose: bool = F
         tone="info",
         latest=latest,
         show_open_button=True,
+        show_install_button=can_self_update,
     )
 
 
@@ -456,6 +644,7 @@ def _check_for_updates_popup_async(parent: QWidget | None = None) -> None:
         latest_tag = str(latest.get("tag") or "").strip()
         if not latest_tag or _compare_version_tags(latest_tag, SAVEGAME_EDITOR_VERSION) <= 0:
             return
+        can_self_update = _is_packaged_windows_release() and _select_release_asset(latest.get("assets") or []) is not None
         _show_release_status_dialog(
             parent,
             title=_tr_or("savegame_editor.update.title.available", tr("savegame_editor.update.title")),
@@ -469,6 +658,7 @@ def _check_for_updates_popup_async(parent: QWidget | None = None) -> None:
             tone="info",
             latest=latest,
             show_open_button=True,
+            show_install_button=can_self_update,
         )
 
     QTimer.singleShot(300, _poll)
@@ -2377,6 +2567,7 @@ def open_savegame_editor(self):
     equip_goods_source_by_nick: dict[str, str] = {}
     ship_light_addons_by_ship_cache: dict[str, list[tuple[str, str, str]]] = {}
     ship_light_cache_loaded = {"done": False}
+    ship_package_templates_cache: list[dict] = []
     hash_to_nick: dict[int, str] = {}
     core_component_nicks = self._savegame_editor_collect_core_component_nicks(game_path)
     power_nicks = list(core_component_nicks.get("power", []) or [])
@@ -2431,6 +2622,18 @@ def open_savegame_editor(self):
     ship_archetype_cb.setEditable(True)
     ship_form.addRow(tr("savegame_editor.ship_archetype"), ship_archetype_cb)
     ship_l.addLayout(ship_form)
+
+    ship_tpl_row = QHBoxLayout()
+    ship_tpl_row.addWidget(QLabel(_tr_or("savegame_editor.ship_template", "Ship Template:")))
+    ship_template_cb = QComboBox(dlg)
+    ship_template_cb.setEnabled(False)
+    ship_template_cb.setCurrentIndex(-1)
+    ship_tpl_row.addWidget(ship_template_cb, 1)
+    apply_ship_template_btn = QPushButton(_tr_or("savegame_editor.ship_template_apply", "Apply"), dlg)
+    apply_ship_template_btn.setEnabled(False)
+    ship_tpl_row.addWidget(apply_ship_template_btn)
+    ship_l.addLayout(ship_tpl_row)
+
     ship_tabs = QTabWidget(dlg)
 
     ship_core_tab = QWidget(dlg)
@@ -2541,6 +2744,8 @@ def open_savegame_editor(self):
     ship_l.addWidget(ship_tabs, 1)
     ship_editor_controls = [
         ship_archetype_cb,
+        ship_template_cb,
+        apply_ship_template_btn,
         core_power_cb,
         core_engine_cb,
         core_scanner_cb,
@@ -2757,6 +2962,8 @@ def open_savegame_editor(self):
             houses_tbl,
             template_cb,
             apply_template_btn,
+            ship_template_cb,
+            apply_ship_template_btn,
             unlock_all_btn,
             visit_unlock_all_btn,
             visit_reveal_all_btn,
@@ -2801,6 +3008,8 @@ def open_savegame_editor(self):
             houses_tbl,
             template_cb,
             apply_template_btn,
+            ship_template_cb,
+            apply_ship_template_btn,
             unlock_all_btn,
             visit_unlock_all_btn,
             visit_reveal_all_btn,
@@ -2816,6 +3025,8 @@ def open_savegame_editor(self):
             w.setEnabled(True)
         template_cb.setEnabled(bool(templates))
         apply_template_btn.setEnabled(bool(templates))
+        ship_template_cb.setEnabled(bool(ship_package_templates_cache))
+        apply_ship_template_btn.setEnabled(bool(ship_package_templates_cache))
         act_file_reload.setEnabled(True)
         act_file_save.setEnabled(True)
         _refresh_ship_editor_lock()
@@ -3662,29 +3873,36 @@ def open_savegame_editor(self):
             return
         package_rows: dict[str, list[tuple[str, str, str]]] = {}
         ship_to_package_candidates: dict[str, list[str]] = {}
+        hull_to_ship: dict[str, str] = {}
+        package_good_addons: dict[str, tuple[str, list[tuple[str, str, str]]]] = {}
         try:
             sections = self._parser.parse(str(goods_ini))
         except Exception:
             return
+
+        def _parse_addon_entries(entries: list) -> list[tuple[str, str, str]]:
+            addons: list[tuple[str, str, str]] = []
+            for k, v in entries:
+                if str(k or "").strip().lower() != "addon":
+                    continue
+                parts = [x.strip() for x in str(v or "").split(",")]
+                if not parts or not parts[0]:
+                    continue
+                item = str(parts[0] or "").strip()
+                hp = str(parts[1] or "").strip() if len(parts) > 1 else ""
+                if hp and re.match(r"^[+-]?\d+(\.\d+)?$", hp):
+                    hp = ""
+                extra = ", ".join(parts[2:]).strip() if len(parts) > 2 else "1"
+                addons.append((item, hp, extra))
+            return addons
+
         for sec_name, entries in sections:
             sec = str(sec_name or "").strip().lower()
             if sec == "package":
                 pack_nick = self._entry_get_value(entries, "nickname").strip()
                 if not pack_nick:
                     continue
-                addons: list[tuple[str, str, str]] = []
-                for k, v in entries:
-                    if str(k or "").strip().lower() != "addon":
-                        continue
-                    parts = [x.strip() for x in str(v or "").split(",")]
-                    if not parts or not parts[0]:
-                        continue
-                    item = str(parts[0] or "").strip()
-                    hp = str(parts[1] or "").strip() if len(parts) > 1 else ""
-                    if hp and re.match(r"^[+-]?\d+(\.\d+)?$", hp):
-                        hp = ""
-                    extra = ", ".join(parts[2:]).strip() if len(parts) > 2 else "1"
-                    addons.append((item, hp, extra))
+                addons = _parse_addon_entries(entries)
                 if addons:
                     package_rows[pack_nick.lower()] = addons
             elif sec == "good":
@@ -3692,6 +3910,15 @@ def open_savegame_editor(self):
                 ship_nick = self._entry_get_value(entries, "ship").strip()
                 category = self._entry_get_value(entries, "category").strip().lower()
                 hull_nick = self._entry_get_value(entries, "hull").strip()
+                # Build hull→ship mapping from shiphull entries
+                if category == "shiphull" and good_nick and ship_nick:
+                    hull_to_ship[good_nick.lower()] = ship_nick
+                # Collect _package goods directly (category=ship with addon lines)
+                if "_package" in good_nick.lower() and category == "ship":
+                    addons = _parse_addon_entries(entries)
+                    if addons:
+                        package_good_addons[good_nick.lower()] = (hull_nick, addons)
+                # Existing ship-to-package-candidate logic for light addons
                 if (not ship_nick) and category in {"ship", "shiphull"} and good_nick:
                     ship_nick = good_nick
                 if (not ship_nick) and hull_nick.lower().endswith("_hull"):
@@ -3744,6 +3971,52 @@ def open_savegame_editor(self):
                 lights.append((item_n, hp_n, str(extra or "").strip()))
             if lights:
                 ship_light_addons_by_ship_cache[ship_key] = lights
+
+        # Also extract light addons from [Good] _package entries (fallback when no [Package] sections exist)
+        for pack_nick, (hull_nick, addons) in package_good_addons.items():
+            ship_arch = hull_to_ship.get(hull_nick.lower(), "")
+            if not ship_arch and hull_nick.lower().endswith("_hull"):
+                ship_arch = hull_nick[:-5]
+            if not ship_arch:
+                ship_arch = pack_nick.replace("_package", "")
+            ship_key = ship_arch.lower()
+            if ship_key in ship_light_addons_by_ship_cache:
+                continue
+            lights_pkg: list[tuple[str, str, str]] = []
+            seen_pkg: set[tuple[str, str]] = set()
+            for item, hp, extra in addons:
+                item_n = str(item or "").strip()
+                hp_n = str(hp or "").strip()
+                if not item_n:
+                    continue
+                hp_l = hp_n.lower()
+                typ = _equip_type(item_n)
+                is_light = hp_l.startswith(keep_hp_prefixes) or typ in keep_types
+                if not is_light:
+                    continue
+                key = (item_n.lower(), hp_l)
+                if key in seen_pkg:
+                    continue
+                seen_pkg.add(key)
+                lights_pkg.append((item_n, hp_n, str(extra or "").strip()))
+            if lights_pkg:
+                ship_light_addons_by_ship_cache[ship_key] = lights_pkg
+
+        # Build ship package templates from [Good] sections with _package nickname.
+        ship_package_templates_cache.clear()
+        for pack_nick, (hull_nick, addons) in package_good_addons.items():
+            # Resolve ship archetype via hull→ship mapping
+            ship_arch = hull_to_ship.get(hull_nick.lower(), "")
+            if not ship_arch and hull_nick.lower().endswith("_hull"):
+                ship_arch = hull_nick[:-5]
+            if not ship_arch:
+                ship_arch = pack_nick.replace("_package", "")
+            label = _item_ui_label(ship_arch) if ship_arch else pack_nick
+            ship_package_templates_cache.append({
+                "ship_nick": ship_arch,
+                "label": label,
+                "addons": addons,
+            })
 
     def _ship_light_addons(ship_nick: str) -> list[tuple[str, str, str]]:
         _load_ship_light_addons_from_goods()
@@ -5412,7 +5685,7 @@ def open_savegame_editor(self):
         nonlocal power_nicks, engine_nicks, scanner_nicks, tractor_nicks
         nonlocal cloak_nicks, cloak_mod_available, cloak_active
         nonlocal equip_type_by_nick, equip_source_file_by_nick, equip_hp_types_by_nick, equip_goods_source_by_nick
-        nonlocal ship_light_addons_by_ship_cache, ship_light_cache_loaded, hash_to_nick
+        nonlocal ship_light_addons_by_ship_cache, ship_light_cache_loaded, ship_package_templates_cache, hash_to_nick
         nonlocal jump_data, system_label_by_nick, system_to_bases, game_data_loaded_key
         gp = str(target_game_path or "").strip()
         game_path = gp
@@ -5479,6 +5752,7 @@ def open_savegame_editor(self):
         cloak_active = False
         ship_light_addons_by_ship_cache.clear()
         ship_light_cache_loaded["done"] = False
+        ship_package_templates_cache.clear()
         hash_to_nick = {int(k): str(v) for k, v in dict(item_data_new.get("hash_to_nick", {}) or {}).items()}
         jump_data = self._savegame_editor_collect_jump_connections(gp)
         rep_group_cb.blockSignals(True)
@@ -5495,6 +5769,15 @@ def open_savegame_editor(self):
         apply_template_btn.setEnabled(bool(templates))
         template_cb.setCurrentIndex(-1)
         template_cb.blockSignals(False)
+        _load_ship_light_addons_from_goods()
+        ship_template_cb.blockSignals(True)
+        ship_template_cb.clear()
+        for tpl in sorted(ship_package_templates_cache, key=lambda t: str(t.get("label", "")).lower()):
+            ship_template_cb.addItem(str(tpl.get("label") or tpl.get("ship_nick") or ""), tpl)
+        ship_template_cb.setEnabled(bool(ship_package_templates_cache))
+        apply_ship_template_btn.setEnabled(bool(ship_package_templates_cache))
+        ship_template_cb.setCurrentIndex(-1)
+        ship_template_cb.blockSignals(False)
         cur_sys = _current_system_nick()
         system_cb.blockSignals(True)
         system_cb.clear()
@@ -5841,6 +6124,91 @@ def open_savegame_editor(self):
             )
         )
         self.statusBar().showMessage(tr("savegame_editor.pending_changes"))
+
+    def _new_save() -> None:
+        if not _ensure_game_data_loaded():
+            return
+        save_dirs = _save_dirs()
+        start_dir = str(save_dirs[0]) if save_dirs else str(Path.home())
+        chosen, _flt = QFileDialog.getSaveFileName(
+            dlg,
+            _tr_or("savegame_editor.new_save", "New Save..."),
+            str(Path(start_dir) / "NewSave.fl"),
+            tr("savegame_editor.file_filter"),
+        )
+        if not chosen:
+            return
+        target = Path(chosen)
+        if target.suffix.lower() != ".fl":
+            target = target.with_suffix(".fl")
+        # Build minimal save content
+        lines: list[str] = []
+        lines.append("[Player]")
+        lines.append("rank = 0")
+        lines.append("money = 2000")
+        lines.append("description = FLAtlas")
+        if system_cb.count() > 0:
+            sys_nick = str(system_cb.itemData(0) or "").strip()
+        else:
+            sys_nick = "Li01"
+        bases = list(system_to_bases.get(sys_nick, []) or [])
+        if bases:
+            base_nick = str(bases[0].get("nickname", "") or "").strip()
+        else:
+            base_nick = ""
+        lines.append(f"system = {sys_nick}")
+        if base_nick:
+            lines.append(f"base = {base_nick}")
+        if ship_nicks:
+            lines.append(f"ship_archetype = {ship_nicks[0]}")
+        else:
+            lines.append("ship_archetype = ge_fighter")
+        if power_nicks:
+            lines.append(f"equip = {power_nicks[0]}, , 1")
+        if engine_nicks:
+            lines.append(f"equip = {engine_nicks[0]}, , 1")
+        if scanner_nicks:
+            lines.append(f"equip = {scanner_nicks[0]}, , 1")
+        if tractor_nicks:
+            lines.append(f"equip = {tractor_nicks[0]}, , 1")
+        # Trent body parts from costume_map or hardcoded defaults
+        trent_costume = dict(costume_map.get("trent", {}) or {})
+        bp_body = str(trent_costume.get("body", "") or "").strip() or "pl_trent_body"
+        bp_head = str(trent_costume.get("head", "") or "").strip() or "pi_pirate5_head"
+        bp_lh = str(trent_costume.get("lefthand", "") or "").strip() or "benchmark_male_hand_left"
+        bp_rh = str(trent_costume.get("righthand", "") or "").strip() or "benchmark_male_hand_right"
+        lines.append(f"com_body = {bp_body}")
+        lines.append(f"com_head = {bp_head}")
+        lines.append(f"com_lefthand = {bp_lh}")
+        lines.append(f"com_righthand = {bp_rh}")
+        lines.append(f"body = {bp_body}")
+        lines.append(f"head = {bp_head}")
+        lines.append(f"lefthand = {bp_lh}")
+        lines.append(f"righthand = {bp_rh}")
+        lines.append("house = 0.91, li_n_grp")
+        lines.append("")
+        lines.append("[StoryInfo]")
+        lines.append("missionnum = 0")
+        lines.append("delta_worth = 0")
+        lines.append("current_worth = 0")
+        lines.append("")
+        content = "\n".join(lines) + "\n"
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="cp1252")
+        except Exception as exc:
+            QMessageBox.critical(dlg, tr("savegame_editor.title"), str(exc))
+            return
+        # Add save dir and load the new file
+        merged_dirs = self._canonical_savegame_dirs_from_input(save_dir_edit.text().strip())
+        merged_dirs.extend([target.parent])
+        save_dir_edit.setText(self._savegame_dirs_to_text(merged_dirs))
+        _apply_save_dir()
+        ok, msg = _parse_with_loading(target)
+        if not ok:
+            QMessageBox.warning(dlg, tr("savegame_editor.title"), msg)
+            return
+        _refresh_savegame_list(select_path=target, auto_load=False)
 
     def _pick_file() -> None:
         cur = state.get("path")
@@ -6400,6 +6768,49 @@ def open_savegame_editor(self):
         if not ok:
             QMessageBox.warning(dlg, tr("savegame_editor.title"), msg)
 
+    def _apply_ship_template() -> None:
+        tpl = ship_template_cb.currentData()
+        if not isinstance(tpl, dict):
+            return
+        ship_nick = str(tpl.get("ship_nick") or "").strip()
+        addons = list(tpl.get("addons") or [])
+        if not ship_nick or not addons:
+            return
+        # Set ship archetype
+        _set_item_combo_value(ship_archetype_cb, ship_nick)
+        # Separate core components from regular equip
+        core_map: dict[str, tuple[str, str]] = {}
+        equip_list: list[tuple[str, str, str]] = []
+        for item_n, hp_n, extra in addons:
+            core_key = _core_component_key_for_item(item_n)
+            if core_key in {"power", "engine", "scanner", "tractor", "cloak"}:
+                if core_key not in core_map:
+                    core_map[core_key] = (item_n, extra or "1")
+            else:
+                equip_list.append((item_n, hp_n, extra or "1"))
+        # Set core components
+        for key, cb in [("power", core_power_cb), ("engine", core_engine_cb),
+                        ("scanner", core_scanner_cb), ("tractor", core_tractor_cb)]:
+            if key in core_map:
+                _set_item_combo_value(cb, core_map[key][0])
+                cb.setProperty("fl_extra", core_map[key][1])
+        if "cloak" in core_map and cloak_active:
+            _set_item_combo_value(core_cloak_cb, core_map["cloak"][0])
+            core_cloak_cb.setProperty("fl_extra", core_map["cloak"][1])
+        # Clear equip table and add template equip
+        equip_tbl.setRowCount(0)
+        for item_n, hp_n, extra in equip_list:
+            _add_equip_row(item_n, hp_n, extra, defer_refresh=True)
+        _refresh_equip_table_filter()
+        _refresh_hardpoint_hint()
+        _refresh_cloak_visibility()
+        info_lbl.setText(
+            _tr_or("savegame_editor.ship_template_applied",
+                    "Ship template applied: {template}").format(
+                template=str(tpl.get("label") or ship_nick),
+            )
+        )
+
     def _apply_template() -> None:
         tpl = template_cb.currentData()
         if not isinstance(tpl, dict):
@@ -6450,6 +6861,7 @@ def open_savegame_editor(self):
             return
         _save_to_path(cur)
 
+    act_file_new = file_menu.addAction(_tr_or("savegame_editor.new_save", "New Save..."))
     act_file_open = file_menu.addAction(tr("savegame_editor.open"))
     recent_menu = file_menu.addMenu(_tr_or("savegame_editor.recent", "Open Recent"))
     act_file_load_selected = file_menu.addAction(tr("savegame_editor.load_selected"))
@@ -6468,6 +6880,7 @@ def open_savegame_editor(self):
     tools_menu.addSeparator()
     act_help_reset_config = tools_menu.addAction(tr("savegame_editor.help.reset_config"))
     act_help_quick = help_menu.addAction(tr("savegame_editor.help.quick"))
+    act_help_wiki = help_menu.addAction(_tr_or("savegame_editor.help.wiki", "Online Help (Wiki)"))
     help_menu.addSeparator()
     act_help_updates = help_menu.addAction(tr("savegame_editor.help.updates"))
     help_menu.addSeparator()
@@ -6517,6 +6930,7 @@ def open_savegame_editor(self):
     visit_unlock_all_btn.clicked.connect(_visit_unlock_all_connections)
     visit_reveal_all_btn.clicked.connect(_visit_reveal_all)
     apply_template_btn.clicked.connect(_apply_template)
+    apply_ship_template_btn.clicked.connect(_apply_ship_template)
     def _request_close() -> None:
         if _confirm_close_with_unsaved_changes():
             dlg.reject()
@@ -6524,6 +6938,7 @@ def open_savegame_editor(self):
     close_btn.clicked.connect(_request_close)
     act_file_refresh.triggered.connect(lambda: _refresh_savegame_list(auto_load=False))
     act_file_load_selected.triggered.connect(_load_selected)
+    act_file_new.triggered.connect(_new_save)
     act_file_open.triggered.connect(_pick_file)
     act_file_reload.triggered.connect(_reload)
     act_file_save.triggered.connect(_save)
@@ -6535,6 +6950,7 @@ def open_savegame_editor(self):
     act_help_quick.triggered.connect(
         lambda: QMessageBox.information(dlg, tr("savegame_editor.help.quick"), tr("savegame_editor.help.quick_text"))
     )
+    act_help_wiki.triggered.connect(lambda: webbrowser.open("https://github.com/flathack/FLAtlas---Save-Game-Editor/wiki"))
     def _show_about_dialog() -> None:
         about_dlg = QDialog(dlg)
         about_dlg.setWindowTitle(tr("savegame_editor.help.about"))
