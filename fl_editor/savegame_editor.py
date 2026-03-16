@@ -58,7 +58,7 @@ from PySide6.QtWidgets import (
 from .i18n import tr, set_language, get_language, available_languages
 from .config import Config, CONFIG_PATH
 from .parser import FLParser, find_all_systems
-from .path_utils import ci_find, ci_resolve
+from .path_utils import ci_find, ci_resolve, ci_resolve_any
 from .dll_resources import DllStringResolver
 from .version import APP_VERSION
 
@@ -1534,6 +1534,7 @@ class _SavegameEditorHost(QMainWindow):
             "engine": [],
             "scanner": [],
             "tractor": [],
+            "cloak": [],
         }
         gp = str(game_path or "").strip()
         if not gp:
@@ -1547,11 +1548,15 @@ class _SavegameEditorHost(QMainWindow):
             "engine": "engine",
             "scanner": "scanner",
             "tractor": "tractor",
+            "cloakingdevice": "cloak",
         }
         files_with_sections = [
             ("DATA/EQUIPMENT/misc_equip.ini", {"power", "scanner", "tractor"}),
             ("DATA/EQUIPMENT/engine_equip.ini", {"engine"}),
         ]
+        # Only collect cloak nicks if the cloak mod is installed.
+        if self._savegame_editor_is_cloak_mod_installed(gp):
+            files_with_sections.append(("DATA/EQUIPMENT/weapon_equip.ini", {"cloak"}))
         acc: dict[str, set[str]] = {k: set() for k in out.keys()}
         for rel, allowed_sections in files_with_sections:
             fp = ci_resolve(root, rel)
@@ -1572,6 +1577,53 @@ class _SavegameEditorHost(QMainWindow):
         for k in out.keys():
             out[k] = sorted(acc.get(k, set()), key=str.lower)
         return out
+
+    def _savegame_editor_is_cloak_mod_installed(self, game_path: str) -> bool:
+        gp = str(game_path or "").strip()
+        if not gp:
+            return False
+        root = Path(gp)
+        if not root.exists():
+            return False
+        dll_path = ci_resolve_any(root, "EXE/Cloak.dll")
+        ini_path = ci_resolve(root, "EXE/cloak.ini")
+        return bool(dll_path and dll_path.is_file() and ini_path and ini_path.is_file())
+
+    def _savegame_editor_ship_has_cloak_hardpoint(self, game_path: str, ship_nick: str) -> bool:
+        gp = str(game_path or "").strip()
+        if not gp or not ship_nick:
+            return False
+        root = Path(gp)
+        if not root.exists():
+            return False
+        shiparch_path = ci_resolve(root, "DATA/SHIPS/shiparch.ini")
+        if not shiparch_path or not shiparch_path.is_file():
+            return False
+        try:
+            sections = self._parser.parse(str(shiparch_path))
+        except Exception:
+            return False
+        da_archetype = ""
+        for sec_name, entries in sections:
+            if str(sec_name or "").strip().lower() != "ship":
+                continue
+            nick = self._entry_get_value(entries, "nickname").strip()
+            if nick.lower() == ship_nick.lower():
+                da_archetype = self._entry_get_value(entries, "da_archetype").strip()
+                break
+        if not da_archetype:
+            return False
+        cmp_path = ci_resolve_any(root, f"DATA/{da_archetype}")
+        if not cmp_path or not cmp_path.is_file():
+            return False
+        if not str(cmp_path).lower().endswith(".cmp"):
+            return False
+        try:
+            raw = cmp_path.read_bytes()
+            text = raw.decode("ascii", errors="ignore")
+            return "HpCloak" in text
+        except Exception:
+            return False
 
     def _savegame_editor_collect_costumes(self, game_path: str) -> dict[str, dict[str, str]]:
         out: dict[str, dict[str, str]] = {}
@@ -2331,6 +2383,9 @@ def open_savegame_editor(self):
     engine_nicks = list(core_component_nicks.get("engine", []) or [])
     scanner_nicks = list(core_component_nicks.get("scanner", []) or [])
     tractor_nicks = list(core_component_nicks.get("tractor", []) or [])
+    cloak_nicks = list(core_component_nicks.get("cloak", []) or [])
+    cloak_mod_available = self._savegame_editor_is_cloak_mod_installed(game_path)
+    cloak_active = False  # True when cloak combo should be considered active (independent of tab visibility)
     jump_data: dict[str, object] = {
         "systems": {},
         "edges": [],
@@ -2387,14 +2442,23 @@ def open_savegame_editor(self):
     core_engine_cb = QComboBox(dlg)
     core_scanner_cb = QComboBox(dlg)
     core_tractor_cb = QComboBox(dlg)
+    core_cloak_cb = QComboBox(dlg)
     core_component_cbs = [core_power_cb, core_engine_cb, core_scanner_cb, core_tractor_cb]
     for cb in core_component_cbs:
         cb.setEditable(True)
         cb.setProperty("fl_extra", "1")
+    core_cloak_cb.setEditable(True)
+    core_cloak_cb.setProperty("fl_extra", "1")
     ship_core_form.addRow("Power", core_power_cb)
     ship_core_form.addRow("Engine", core_engine_cb)
     ship_core_form.addRow("Scanner", core_scanner_cb)
     ship_core_form.addRow("Tractor", core_tractor_cb)
+    ship_core_form.addRow("Cloak", core_cloak_cb)
+    core_cloak_cb.setVisible(False)
+    # Find the Cloak label (last row just added) and hide it too.
+    _cloak_label_widget = ship_core_form.labelForField(core_cloak_cb)
+    if _cloak_label_widget:
+        _cloak_label_widget.setVisible(False)
     ship_core_l.addLayout(ship_core_form)
     hardpoint_hint_lbl = QLabel("", dlg)
     hardpoint_hint_lbl.setWordWrap(True)
@@ -2481,6 +2545,7 @@ def open_savegame_editor(self):
         core_engine_cb,
         core_scanner_cb,
         core_tractor_cb,
+        core_cloak_cb,
         equip_filter_edit,
         equip_tbl,
         equip_add_btn,
@@ -3008,6 +3073,7 @@ def open_savegame_editor(self):
             (core_engine_cb, "Engine"),
             (core_scanner_cb, "Scanner"),
             (core_tractor_cb, "Tractor"),
+            (core_cloak_cb, "Cloak"),
         ):
             _lock_item_combo(cb, label)
 
@@ -3579,6 +3645,8 @@ def open_savegame_editor(self):
             return "scanner"
         if typ == "tractor":
             return "tractor"
+        if typ == "cloakingdevice" and cloak_mod_available:
+            return "cloak"
         return ""
 
     def _load_ship_light_addons_from_goods() -> None:
@@ -3864,7 +3932,7 @@ def open_savegame_editor(self):
             if widget is ship_archetype_cb:
                 widget.setEnabled(not lock_ship_editor and (not bool(widget.property("fl_compat_locked"))))
                 continue
-            if widget in core_component_cbs:
+            if widget in core_component_cbs or widget is core_cloak_cb:
                 widget.setEnabled(not lock_ship_editor and (not bool(widget.property("fl_compat_locked"))))
                 continue
             if widget in (equip_del_btn, cargo_del_btn):
@@ -3886,6 +3954,7 @@ def open_savegame_editor(self):
     _setup_item_combo(core_engine_cb, engine_nicks)
     _setup_item_combo(core_scanner_cb, scanner_nicks)
     _setup_item_combo(core_tractor_cb, tractor_nicks)
+    _setup_item_combo(core_cloak_cb, cloak_nicks)
     _setup_item_combo(com_body_cb, trent_body_nicks or trent_nicks or equip_nicks)
     _setup_item_combo(body_cb, trent_body_nicks or trent_nicks or equip_nicks)
     _setup_item_combo(com_head_cb, trent_head_nicks or trent_nicks or equip_nicks)
@@ -4289,7 +4358,7 @@ def open_savegame_editor(self):
             nick = _combo_item_nick(item_cb)
             if not nick:
                 continue
-            if _core_component_key_for_item(nick) in {"power", "engine", "scanner", "tractor"}:
+            if _core_component_key_for_item(nick) in {"power", "engine", "scanner", "tractor", "cloak"}:
                 continue
             hp = _hardpoint_from_widget(hp_w)
             extra = str(item_cb.property("fl_extra") or "").strip()
@@ -4370,12 +4439,26 @@ def open_savegame_editor(self):
             fixed += 1
         return fixed
 
+    def _refresh_cloak_visibility() -> None:
+        nonlocal cloak_active
+        ship_nick = _current_ship_nick()
+        show = bool(cloak_mod_available and cloak_nicks and ship_nick
+                     and self._savegame_editor_ship_has_cloak_hardpoint(game_path, ship_nick))
+        cloak_active = show
+        core_cloak_cb.setVisible(show)
+        lbl = ship_core_form.labelForField(core_cloak_cb)
+        if lbl:
+            lbl.setVisible(show)
+        if not show:
+            core_cloak_cb.setCurrentIndex(core_cloak_cb.findData(""))
+
     def _on_ship_changed() -> None:
         prev_ship = str(state.get("last_ship_nick", "") or "").strip()
         new_ship = _current_ship_nick()
         if bool(state.get("bulk_loading", False)):
             state["last_ship_nick"] = new_ship
             _refresh_ship_editor_lock()
+            _refresh_cloak_visibility()
             return
         if new_ship and new_ship.lower() != prev_ship.lower():
             _replace_ship_lights_for_ship_switch(prev_ship, new_ship)
@@ -4383,6 +4466,7 @@ def open_savegame_editor(self):
             _ensure_empty_hardpoint_rows_for_ship(new_ship)
         state["last_ship_nick"] = new_ship
         _refresh_ship_editor_lock()
+        _refresh_cloak_visibility()
 
     def _collect_invalid_hardpoint_rows(
         ship_nick: str,
@@ -4908,7 +4992,7 @@ def open_savegame_editor(self):
                         hardpoint = ""
                     extra = ", ".join(parts[2:]).strip() if len(parts) > 2 else "1"
                     core_key = _core_component_key_for_item(parts[0])
-                    if core_key in {"power", "engine", "scanner", "tractor"}:
+                    if core_key in {"power", "engine", "scanner", "tractor", "cloak"}:
                         core_item, _core_extra = core_components.get(core_key, ("", "1"))
                         if not core_item:
                             core_components[core_key] = (parts[0], extra or "1")
@@ -5009,6 +5093,9 @@ def open_savegame_editor(self):
             core_scanner_cb.setProperty("fl_extra", str(core_components.get("scanner", ("", "1"))[1] or "1"))
             _set_item_combo_value(core_tractor_cb, core_components.get("tractor", ("", "1"))[0])
             core_tractor_cb.setProperty("fl_extra", str(core_components.get("tractor", ("", "1"))[1] or "1"))
+            _set_item_combo_value(core_cloak_cb, core_components.get("cloak", ("", "1"))[0])
+            core_cloak_cb.setProperty("fl_extra", str(core_components.get("cloak", ("", "1"))[1] or "1"))
+            _refresh_cloak_visibility()
             fixed_battery_spin.setValue(max(0, int(fixed_battery_amount)))
             fixed_repair_spin.setValue(max(0, int(fixed_repair_amount)))
             equip_tbl.setRowCount(0)
@@ -5323,6 +5410,7 @@ def open_savegame_editor(self):
         nonlocal trent_head_nicks, trent_lh_nicks, trent_rh_nicks, ship_hardpoints_by_nick
         nonlocal ship_hp_types_by_hardpoint_by_nick
         nonlocal power_nicks, engine_nicks, scanner_nicks, tractor_nicks
+        nonlocal cloak_nicks, cloak_mod_available, cloak_active
         nonlocal equip_type_by_nick, equip_source_file_by_nick, equip_hp_types_by_nick, equip_goods_source_by_nick
         nonlocal ship_light_addons_by_ship_cache, ship_light_cache_loaded, hash_to_nick
         nonlocal jump_data, system_label_by_nick, system_to_bases, game_data_loaded_key
@@ -5386,6 +5474,9 @@ def open_savegame_editor(self):
         engine_nicks = list(core_component_nicks_new.get("engine", []) or [])
         scanner_nicks = list(core_component_nicks_new.get("scanner", []) or [])
         tractor_nicks = list(core_component_nicks_new.get("tractor", []) or [])
+        cloak_nicks = list(core_component_nicks_new.get("cloak", []) or [])
+        cloak_mod_available = self._savegame_editor_is_cloak_mod_installed(gp)
+        cloak_active = False
         ship_light_addons_by_ship_cache.clear()
         ship_light_cache_loaded["done"] = False
         hash_to_nick = {int(k): str(v) for k, v in dict(item_data_new.get("hash_to_nick", {}) or {}).items()}
@@ -5436,6 +5527,16 @@ def open_savegame_editor(self):
             if str(cb.property("fl_extra") or "").strip() == "":
                 cb.setProperty("fl_extra", "1")
             cb.blockSignals(False)
+        # Refresh cloak combo separately.
+        cloak_current = _combo_item_nick(core_cloak_cb)
+        core_cloak_cb.blockSignals(True)
+        core_cloak_cb.clear()
+        _setup_item_combo(core_cloak_cb, cloak_nicks)
+        _set_item_combo_value(core_cloak_cb, cloak_current)
+        if str(core_cloak_cb.property("fl_extra") or "").strip() == "":
+            core_cloak_cb.setProperty("fl_extra", "1")
+        core_cloak_cb.blockSignals(False)
+        _refresh_cloak_visibility()
         trent_current = [_combo_item_nick(cb) for cb in trent_item_cbs]
         trent_sources: list[tuple[QComboBox, list[str]]] = [
             (com_body_cb, trent_body_nicks or trent_nicks or equip_nicks),
@@ -6015,6 +6116,18 @@ def open_savegame_editor(self):
             if item_token:
                 tail = str(core_cb.property("fl_extra") or "").strip() or "1"
                 equip_lines.append(f"equip = {item_token}, , {tail}")
+        # Cloak core component (uses HpCloak01 hardpoint, not empty).
+        if cloak_active:
+            if bool(core_cloak_cb.property("fl_compat_locked")):
+                raw_line = str(original_player_values.get("core_cloak", "") or "").strip()
+                if raw_line:
+                    equip_lines.append(raw_line)
+            else:
+                cloak_nick = _combo_item_nick(core_cloak_cb)
+                cloak_token = _item_token_for_save(cloak_nick)
+                if cloak_token:
+                    cloak_tail = str(core_cloak_cb.property("fl_extra") or "").strip() or "1"
+                    equip_lines.append(f"equip = {cloak_token}, HpCloak01, {cloak_tail}")
         for r in range(equip_tbl.rowCount()):
             item_cb = equip_tbl.cellWidget(r, 0)
             hp_w = equip_tbl.cellWidget(r, 1)
@@ -6025,7 +6138,7 @@ def open_savegame_editor(self):
                 equip_lines.append(raw_line)
                 continue
             item_nick = _combo_item_nick(item_cb)
-            if not item_nick or _core_component_key_for_item(item_nick) in {"power", "engine", "scanner", "tractor"}:
+            if not item_nick or _core_component_key_for_item(item_nick) in {"power", "engine", "scanner", "tractor", "cloak"}:
                 continue
             hardpoint = _hardpoint_from_widget(hp_w)
             extra = str(item_cb.property("fl_extra") or "").strip()

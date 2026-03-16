@@ -51,6 +51,20 @@ def ci_resolve(base: Path, rel: str) -> Path | None:
     return current if current.is_file() else None
 
 
+def ci_resolve_any(base: Path, rel: str) -> Path | None:
+    """Like *ci_resolve* but returns files **and** directories."""
+    parts = rel.replace("\\", "/").split("/")
+    current = base
+    for part in parts:
+        if not part:
+            continue
+        found = ci_find(current, part)
+        if found is None:
+            return None
+        current = found
+    return current if current.exists() else None
+
+
 def parse_position(pos_str: str) -> tuple[float, float, float]:
     """Parst eine Freelancer-Positionsangabe ``'x, y, z'`` in ein Float-Tripel.
 
