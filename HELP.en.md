@@ -66,7 +66,7 @@ pip install -r requirements.txt
 python start_savegame_editor.py
 ```
 
-**Requirements:** Python 3.10+, PySide6, pefile
+**Requirements:** Python 3.10+, PySide6, pefile, Pillow
 
 ---
 

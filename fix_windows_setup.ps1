@@ -235,7 +235,7 @@ else {
     Write-Step "Install-Schritt uebersprungen (-SkipInstall)."
 }
 
-$requiredModules = @("PySide6", "pefile")
+$requiredModules = @("PySide6", "pefile", "PIL")
 $runtimePython = $venvPython
 if (-not (Test-PythonImports -PythonPath $venvPython -Modules $requiredModules)) {
     if (Test-PythonImports -PythonPath $parentVenvPython -Modules $requiredModules) {

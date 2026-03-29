@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import math
 from struct import pack, unpack_from
 import sys
+import tempfile
 import types
 from pathlib import Path
 
@@ -29,6 +30,8 @@ _BRIDGE_MODULES = (
 )
 _BRIDGE_ERROR = ""
 _BRIDGE_READY = False
+_EMBEDDED_TEXTURE_CACHE: dict[Path, dict[str, Path]] = {}
+_EMBEDDED_TEXTURE_TEMP_DIRS: list[tempfile.TemporaryDirectory[str]] = []
 _DEFAULT_PREVIEW_ADJUSTMENTS = {
     "head": {
         "offset": (0.01, -0.01, 0.0),
@@ -363,6 +366,150 @@ def _material_color(material_name: str) -> QColor:
         QColor(120, 134, 146),
     )
     return palette[sum(ord(ch) for ch in raw) % len(palette)]
+
+
+def _extract_utf_material_texture_map(model_path: Path) -> dict[str, tuple[str, ...]]:
+    try:
+        cmp_loader = sys.modules[f"{_BRIDGE_PACKAGE}.cmp_loader"]
+        raw = model_path.resolve().read_bytes()
+        header = cmp_loader.parse_utf_header(raw)
+        nodes = cmp_loader._parse_utf_nodes(raw, header)
+    except Exception:
+        return {}
+
+    material_map: dict[str, list[str]] = {}
+    for node in nodes:
+        path = str(getattr(node, "path", "") or "")
+        lowered_path = path.lower()
+        if "material library/" not in lowered_path:
+            continue
+        if not (lowered_path.endswith("/dt_name") or lowered_path.endswith("/et_name")):
+            continue
+        if node.data_offset is None or not node.used_size:
+            continue
+        parts = path.replace("\\", "/").strip("/").split("/")
+        if len(parts) < 3:
+            continue
+        material_name = parts[-2].strip()
+        if not material_name:
+            continue
+        start = int(node.data_offset)
+        size = int(node.used_size)
+        value = raw[start:start + size].split(b"\x00", 1)[0].decode("ascii", errors="ignore").strip()
+        if not value:
+            continue
+        material_map.setdefault(material_name.lower(), []).append(value)
+    return {key: tuple(values) for key, values in material_map.items()}
+
+
+def _resolve_embedded_texture_path(
+    material_name: str,
+    embedded_textures: dict[str, Path],
+    material_texture_map: dict[str, tuple[str, ...]] | None = None,
+) -> Path | None:
+    if not embedded_textures:
+        return None
+    raw_name = str(material_name or "").strip()
+    candidates: list[str] = []
+    mapped_texture_names = () if material_texture_map is None else material_texture_map.get(raw_name.lower(), ())
+    for mapped_name in mapped_texture_names:
+        normalized_mapped = mapped_name.replace("\\", "/").split("/")[-1].strip()
+        if not normalized_mapped:
+            continue
+        lowered_mapped = normalized_mapped.lower()
+        lowered_mapped_stem = Path(normalized_mapped).stem.lower()
+        candidates.extend((lowered_mapped, lowered_mapped_stem))
+    if raw_name:
+        normalized_name = raw_name.replace("\\", "/").split("/")[-1].strip()
+        if normalized_name:
+            lowered_name = normalized_name.lower()
+            lowered_stem = Path(normalized_name).stem.lower()
+            candidates.extend((lowered_name, lowered_stem))
+            if "." not in lowered_name:
+                candidates.extend((f"{lowered_name}.tga", f"{lowered_name}.dds"))
+                if lowered_stem and lowered_stem != lowered_name:
+                    candidates.extend((f"{lowered_stem}.tga", f"{lowered_stem}.dds"))
+    for candidate in candidates:
+        texture_path = embedded_textures.get(candidate)
+        if texture_path is not None:
+            return texture_path
+    unique_paths = tuple(dict.fromkeys(embedded_textures.values()))
+    if len(unique_paths) == 1:
+        return unique_paths[0]
+    return None
+
+
+def _embedded_texture_extension(texture_blob: bytes) -> str | None:
+    if len(texture_blob) >= 4 and texture_blob[:4] == b"DDS ":
+        return ".dds"
+    if len(texture_blob) >= 18 and texture_blob[1] in {0, 1} and texture_blob[2] in {1, 2, 3, 9, 10, 11}:
+        return ".tga"
+    return None
+
+
+def _extract_utf_embedded_textures(model_path: Path) -> dict[str, Path]:
+    resolved = model_path.resolve()
+    cached = _EMBEDDED_TEXTURE_CACHE.get(resolved)
+    if cached is not None:
+        return cached
+    try:
+        cmp_loader = sys.modules[f"{_BRIDGE_PACKAGE}.cmp_loader"]
+        raw = resolved.read_bytes()
+        header = cmp_loader.parse_utf_header(raw)
+        nodes = cmp_loader._parse_utf_nodes(raw, header)
+    except Exception:
+        _EMBEDDED_TEXTURE_CACHE[resolved] = {}
+        return {}
+
+    best_entries: dict[str, tuple[int, bytes]] = {}
+    for node in nodes:
+        path = str(getattr(node, "path", "") or "")
+        if "texture library" not in path.lower():
+            continue
+        if node.data_offset is None or not node.used_size:
+            continue
+        parts = path.replace("\\", "/").strip("/").split("/")
+        if len(parts) < 3:
+            continue
+        texture_name = parts[-2].strip()
+        mip_name = str(getattr(node, "name", "") or "").strip().lower()
+        if not texture_name or not mip_name.startswith("mip"):
+            continue
+        try:
+            mip_level = int(mip_name[3:])
+        except ValueError:
+            continue
+        start = int(node.data_offset)
+        size = int(node.used_size)
+        texture_blob = raw[start:start + size]
+        if not texture_blob:
+            continue
+        current = best_entries.get(texture_name.lower())
+        if current is None or mip_level < current[0]:
+            best_entries[texture_name.lower()] = (mip_level, texture_blob)
+
+    if not best_entries:
+        _EMBEDDED_TEXTURE_CACHE[resolved] = {}
+        return {}
+
+    tmp = tempfile.TemporaryDirectory(prefix="flatlas_dfm_tex_")
+    _EMBEDDED_TEXTURE_TEMP_DIRS.append(tmp)
+    tmp_dir = Path(tmp.name)
+    result: dict[str, Path] = {}
+    for texture_name, (_mip_level, texture_blob) in best_entries.items():
+        ext = _embedded_texture_extension(texture_blob)
+        if ext is None:
+            continue
+        stem = Path(texture_name).stem
+        texture_path = tmp_dir / f"{stem}{ext}"
+        try:
+            texture_path.write_bytes(texture_blob)
+        except OSError:
+            continue
+        result[texture_name.lower()] = texture_path
+        result[stem.lower()] = texture_path
+    _EMBEDDED_TEXTURE_CACHE[resolved] = result
+    return result
 
 
 def _character_preview_transform(scale: float = 72.0, *, flip_x: bool = False, flip_z: bool = False) -> _SimpleTransform:
@@ -871,6 +1018,8 @@ class FreelancerModelPreviewWidget(QWidget):
                 if model_path.suffix.lower() == ".dfm":
                     geometries, bounds, hardpoints = _load_dfm_preview_data(model_path)
                     scene_data = None
+                    embedded_textures = _extract_utf_embedded_textures(model_path)
+                    material_texture_map = _extract_utf_material_texture_map(model_path)
                 else:
                     scene_mod = sys.modules[f"{_BRIDGE_PACKAGE}.native_preview_scene_data"]
                     native_model = _load_native_model_any(model_path)
@@ -878,6 +1027,8 @@ class FreelancerModelPreviewWidget(QWidget):
                     geometries = tuple(getattr(scene_data, "geometries", ()) or ())
                     bounds = getattr(scene_data, "bounds", None)
                     hardpoints = {}
+                    embedded_textures = {}
+                    material_texture_map = {}
             except Exception:
                 continue
             if not geometries:
@@ -905,7 +1056,6 @@ class FreelancerModelPreviewWidget(QWidget):
             if model_path.suffix.lower() == ".dfm" and global_preview_transform is not None:
                 geometries = tuple(_apply_transform_to_geometry(geometry, global_preview_transform) for geometry in geometries)
                 bounds = _build_simple_bounds([pos for geometry in geometries for pos in geometry.positions])
-            self._texture_refs.clear()
             for geometry in geometries:
                 if scene_data is None:
                     entity = self._build_dfm_geometry_entity(qt3d_mod, geometry)
@@ -960,20 +1110,28 @@ class FreelancerModelPreviewWidget(QWidget):
         self._texture_refs.clear()
         self._material_refs.clear()
 
-    def _build_dfm_geometry_entity(self, qt3d_mod, geometry):
+    def _build_dfm_geometry_entity(self, qt3d_mod, geometry, *, texture_path: Path | None = None):
         try:
             qt3d = sys.modules[f"{_BRIDGE_PACKAGE}.qt3d_compat"]
             entity = qt3d.QEntity3D(self._root)
             renderer = self._build_dfm_geometry_renderer(qt3d, geometry, owner=entity)
-            material = qt3d.QPhongMaterial3D(entity)
-            diffuse = _material_color(geometry.material_name)
-            material.setAmbient(QColor(min(255, int(diffuse.red() * 0.72) + 36), min(255, int(diffuse.green() * 0.72) + 36), min(255, int(diffuse.blue() * 0.72) + 36)))
-            material.setDiffuse(diffuse.lighter(118))
-            material.setSpecular(QColor(210, 214, 220))
-            if hasattr(material, "setShininess"):
-                material.setShininess(28.0)
-            if hasattr(qt3d_mod, "_disable_backface_culling"):
-                qt3d_mod._disable_backface_culling(material)
+            material = None
+            if texture_path is not None and hasattr(qt3d_mod, "build_qt3d_texture_material"):
+                material = qt3d_mod.build_qt3d_texture_material(
+                    owner=entity,
+                    texture_path=texture_path,
+                    texture_refs=self._texture_refs,
+                )
+            if material is None:
+                material = qt3d.QPhongMaterial3D(entity)
+                diffuse = _material_color(geometry.material_name)
+                material.setAmbient(QColor(min(255, int(diffuse.red() * 0.72) + 36), min(255, int(diffuse.green() * 0.72) + 36), min(255, int(diffuse.blue() * 0.72) + 36)))
+                material.setDiffuse(diffuse.lighter(118))
+                material.setSpecular(QColor(210, 214, 220))
+                if hasattr(material, "setShininess"):
+                    material.setShininess(28.0)
+                if hasattr(qt3d_mod, "_disable_backface_culling"):
+                    qt3d_mod._disable_backface_culling(material)
             transform = qt3d.QTransform3D(entity)
             entity.addComponent(renderer)
             entity.addComponent(material)
