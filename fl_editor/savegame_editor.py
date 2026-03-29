@@ -2663,28 +2663,40 @@ def open_savegame_editor(self):
     for cb in trent_item_cbs:
         cb.setEditable(True)
     trent_controls_row = QWidget(dlg)
-    trent_controls_layout = QGridLayout(trent_controls_row)
+    trent_controls_layout = QFormLayout(trent_controls_row)
     trent_controls_layout.setContentsMargins(0, 0, 0, 0)
     trent_controls_layout.setHorizontalSpacing(10)
-    trent_controls_layout.setVerticalSpacing(4)
-    for column, (label_text, cb) in enumerate(
-        [
-            (tr("savegame_editor.trent.body"), body_cb),
-            (tr("savegame_editor.trent.head"), head_cb),
-            (tr("savegame_editor.trent.lh"), lh_cb),
-            (tr("savegame_editor.trent.rh"), rh_cb),
-        ]
-    ):
+    trent_controls_layout.setVerticalSpacing(6)
+    trent_controls_layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+    for label_text, cb in [
+        (tr("savegame_editor.trent.body"), body_cb),
+        (tr("savegame_editor.trent.head"), head_cb),
+        (tr("savegame_editor.trent.lh"), lh_cb),
+        (tr("savegame_editor.trent.rh"), rh_cb),
+    ]:
         field_lbl = QLabel(label_text, trent_controls_row)
         field_lbl.setStyleSheet("font-weight: 600;")
-        trent_controls_layout.addWidget(field_lbl, 0, column)
-        trent_controls_layout.addWidget(cb, 1, column)
-        trent_controls_layout.setColumnStretch(column, 1)
-    trent_l.addWidget(trent_controls_row)
+        trent_controls_layout.addRow(field_lbl, cb)
+    trent_main_row = QWidget(dlg)
+    trent_main_layout = QHBoxLayout(trent_main_row)
+    trent_main_layout.setContentsMargins(0, 0, 0, 0)
+    trent_main_layout.setSpacing(12)
+    trent_left_col = QWidget(trent_main_row)
+    trent_left_layout = QVBoxLayout(trent_left_col)
+    trent_left_layout.setContentsMargins(0, 0, 0, 0)
+    trent_left_layout.setSpacing(6)
+    trent_left_layout.addWidget(trent_controls_row)
+    trent_right_col = QWidget(trent_main_row)
+    trent_right_layout = QVBoxLayout(trent_right_col)
+    trent_right_layout.setContentsMargins(0, 0, 0, 0)
+    trent_right_layout.setSpacing(0)
+    trent_main_layout.addWidget(trent_left_col, 0)
+    trent_main_layout.addWidget(trent_right_col, 1)
+    trent_l.addWidget(trent_main_row, 1)
     trent_3d_status_lbl = QLabel(dlg)
     trent_3d_status_lbl.setWordWrap(True)
     trent_3d_status_lbl.setStyleSheet("color: #9aa0a6; padding-top: 2px; padding-bottom: 2px;")
-    trent_l.addWidget(trent_3d_status_lbl)
+    trent_left_layout.addWidget(trent_3d_status_lbl)
     trent_calibration_log_path = Path(__file__).resolve().parents[1] / "trent_preview_calibration.log"
     trent_adjustment_controls: dict[str, dict[str, tuple[QSlider, QLabel, float]]] = {}
     trent_adjustment_widgets: list[QWidget] = []
@@ -2750,20 +2762,21 @@ def open_savegame_editor(self):
     trent_calibration_footer.addWidget(trent_calibration_reset_btn)
     trent_calibration_l.addLayout(trent_calibration_footer)
     trent_adjustment_widgets.extend([trent_calibration_box, trent_calibration_intro_lbl, trent_calibration_path_lbl, trent_calibration_reset_btn])
-    trent_l.addWidget(trent_calibration_box)
+    trent_left_layout.addWidget(trent_calibration_box)
     trent_calibration_box.setVisible(TRENT_PREVIEW_CALIBRATION_ENABLED)
     trent_calibration_box.setEnabled(TRENT_PREVIEW_CALIBRATION_ENABLED)
     trent_character_3d = FreelancerModelPreviewWidget(
         _tr_or("savegame_editor.trent_preview_character", "Trent Character"),
         dlg,
     )
-    trent_character_3d.setMinimumHeight(520)
-    trent_l.addWidget(trent_character_3d, 1)
+    trent_character_3d.setMinimumHeight(700)
+    trent_right_layout.addWidget(trent_character_3d, 1)
     trent_lock_lbl = QLabel("", dlg)
     trent_lock_lbl.setWordWrap(True)
     trent_lock_lbl.setVisible(False)
     trent_lock_lbl.setStyleSheet("color: #9aa0a6;")
-    trent_l.addWidget(trent_lock_lbl)
+    trent_left_layout.addWidget(trent_lock_lbl)
+    trent_left_layout.addStretch(1)
 
     ship_box = QGroupBox(tr("savegame_editor.ship_group"), dlg)
     ship_l = QVBoxLayout(ship_box)
