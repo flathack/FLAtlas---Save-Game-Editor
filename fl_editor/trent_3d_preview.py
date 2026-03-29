@@ -890,6 +890,8 @@ class FreelancerModelPreviewWidget(QWidget):
         self._last_model_paths: list[Path | None] = []
         self._last_caption = ""
         self._last_meta = ""
+        self._force_flat_gray_material = False
+        self._show_wireframe_overlay = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -988,6 +990,16 @@ class FreelancerModelPreviewWidget(QWidget):
     def set_preview_adjustments(self, adjustments: dict[str, object] | None) -> None:
         self._preview_adjustments = _normalized_preview_adjustments(adjustments)
 
+    def set_render_style(self, *, flat_gray_material: bool = False, wireframe_overlay: bool = False) -> None:
+        flat_gray = bool(flat_gray_material)
+        wireframe = bool(wireframe_overlay)
+        if flat_gray == self._force_flat_gray_material and wireframe == self._show_wireframe_overlay:
+            return
+        self._force_flat_gray_material = flat_gray
+        self._show_wireframe_overlay = wireframe
+        if self._last_model_paths:
+            self.set_model_paths(self._last_model_paths, caption=self._last_caption, meta=self._last_meta)
+
     def set_model_paths(self, model_paths: list[Path | None], *, caption: str = "", meta: str = "") -> None:
         self._last_model_paths = list(model_paths or [])
         self._last_caption = str(caption or "")
@@ -1083,18 +1095,44 @@ class FreelancerModelPreviewWidget(QWidget):
             qt3d = sys.modules[f"{_BRIDGE_PACKAGE}.qt3d_compat"]
             entity = qt3d.QEntity3D(self._root)
             renderer = qt3d_mod.build_native_geometry_renderer(geometry, owner=entity)
-            material = qt3d_mod.build_native_geometry_material(
-                owner=entity,
-                native_geometry=geometry,
-                texture_refs=self._texture_refs,
-                texture_resolver=lambda native_geometry: scene_mod.texture_path_for_geometry(scene_data, native_geometry),
-                allow_textures=True,
-            )
-            qt3d_mod.apply_native_geometry_material(material, geometry)
+            if self._force_flat_gray_material:
+                material = qt3d.QPhongMaterial3D(entity)
+                material.setAmbient(QColor(150, 150, 150))
+                material.setDiffuse(QColor(208, 208, 208))
+                material.setSpecular(QColor(72, 72, 72))
+                if hasattr(material, "setShininess"):
+                    material.setShininess(8.0)
+                if hasattr(qt3d_mod, "_disable_backface_culling"):
+                    qt3d_mod._disable_backface_culling(material)
+            else:
+                material = qt3d_mod.build_native_geometry_material(
+                    owner=entity,
+                    native_geometry=geometry,
+                    texture_refs=self._texture_refs,
+                    texture_resolver=lambda native_geometry: scene_mod.texture_path_for_geometry(scene_data, native_geometry),
+                    allow_textures=True,
+                )
+                qt3d_mod.apply_native_geometry_material(material, geometry)
             transform = qt3d.QTransform3D(entity)
             entity.addComponent(renderer)
             entity.addComponent(material)
             entity.addComponent(transform)
+            self._material_refs.append(material)
+            if self._show_wireframe_overlay and hasattr(qt3d_mod, "build_native_wireframe_renderer"):
+                wire_entity = qt3d.QEntity3D(self._root)
+                wire_renderer = qt3d_mod.build_native_wireframe_renderer(geometry, owner=wire_entity)
+                wire_material = qt3d.QPhongMaterial3D(wire_entity)
+                wire_material.setAmbient(QColor(0, 0, 0))
+                wire_material.setDiffuse(QColor(0, 0, 0))
+                wire_material.setSpecular(QColor(0, 0, 0))
+                if hasattr(wire_material, "setShininess"):
+                    wire_material.setShininess(1.0)
+                wire_transform = qt3d.QTransform3D(wire_entity)
+                wire_entity.addComponent(wire_renderer)
+                wire_entity.addComponent(wire_material)
+                wire_entity.addComponent(wire_transform)
+                self._scene_entities.append(wire_entity)
+                self._material_refs.append(wire_material)
             return entity
         except Exception:
             return None

@@ -1926,6 +1926,7 @@ class _SavegameEditorHost(QMainWindow):
             "trent_lh_nicks": [],
             "trent_rh_nicks": [],
             "trent_model_paths_by_nick": {},
+            "ship_model_paths_by_nick": {},
             "ship_hardpoints_by_nick": {},
             "ship_hp_types_by_hardpoint_by_nick": {},
             "equip_type_by_nick": {},
@@ -1951,6 +1952,7 @@ class _SavegameEditorHost(QMainWindow):
         trent_lh_nicks: list[str] = []
         trent_rh_nicks: list[str] = []
         trent_model_paths_by_nick: dict[str, str] = {}
+        ship_model_paths_by_nick: dict[str, str] = {}
         ship_hardpoints_by_nick: dict[str, list[str]] = {}
         ship_hp_types_by_hardpoint_by_nick: dict[str, dict[str, list[str]]] = {}
         equip_type_by_nick: dict[str, str] = {}
@@ -1994,6 +1996,12 @@ class _SavegameEditorHost(QMainWindow):
                     if not nick:
                         continue
                     ship_nicks.append(nick)
+                    model_path = _resolve_data_model_path(
+                        self._entry_get_value(entries, "da_archetype").strip()
+                        or self._entry_get_value(entries, "mesh").strip()
+                    )
+                    if model_path and nick.lower() not in ship_model_paths_by_nick:
+                        ship_model_paths_by_nick[nick.lower()] = model_path
                     hp_seen: set[str] = set()
                     hp_list: list[str] = []
                     hp_type_map_tmp: dict[str, set[str]] = {}
@@ -2127,6 +2135,7 @@ class _SavegameEditorHost(QMainWindow):
             "trent_lh_nicks": sorted(set(trent_lh_nicks), key=str.lower),
             "trent_rh_nicks": sorted(set(trent_rh_nicks), key=str.lower),
             "trent_model_paths_by_nick": dict(trent_model_paths_by_nick),
+            "ship_model_paths_by_nick": dict(ship_model_paths_by_nick),
             "ship_hardpoints_by_nick": dict(ship_hardpoints_by_nick),
             "ship_hp_types_by_hardpoint_by_nick": dict(ship_hp_types_by_hardpoint_by_nick),
             "equip_type_by_nick": dict(equip_type_by_nick),
@@ -2515,6 +2524,13 @@ def open_savegame_editor(self):
     sidebar_l.addLayout(form)
     validate_btn = QPushButton(tr("savegame_editor.validate"), dlg)
     sidebar_l.addWidget(validate_btn)
+    sidebar_ship_preview = FreelancerModelPreviewWidget(
+        _tr_or("savegame_editor.sidebar_ship_preview", "Player Ship Preview"),
+        dlg,
+    )
+    sidebar_ship_preview.set_render_style(flat_gray_material=True, wireframe_overlay=True)
+    sidebar_ship_preview.setMinimumHeight(260)
+    sidebar_l.addWidget(sidebar_ship_preview)
     validate_help_lbl = QLabel(tr("savegame_editor.validate_help"), dlg)
     validate_help_lbl.setWordWrap(True)
     validate_help_lbl.setStyleSheet("color: #9aa0a6;")
@@ -2993,6 +3009,7 @@ def open_savegame_editor(self):
     }
     map_state: dict[str, object] = {"locked_ids": set(), "visit_ids": set()}
     trent_model_paths_by_nick: dict[str, str] = {}
+    ship_model_paths_by_nick: dict[str, str] = {}
 
     def _trent_preview_adjustments_from_ui() -> dict[str, dict[str, tuple[float, float, float]]]:
         result: dict[str, dict[str, tuple[float, float, float]]] = {}
@@ -3190,6 +3207,41 @@ def open_savegame_editor(self):
                 ).format(count=selected_count)
             )
 
+    def _refresh_sidebar_ship_preview() -> None:
+        ship_nick = _current_ship_nick().strip()
+        preview_title = _tr_or("savegame_editor.sidebar_ship_preview", "Player Ship Preview")
+        if not ship_nick:
+            sidebar_ship_preview.set_model_paths(
+                [],
+                caption=preview_title,
+                meta=_tr_or(
+                    "savegame_editor.sidebar_ship_preview_empty",
+                    "No player ship is currently selected.",
+                ),
+            )
+            return
+        display_name = _item_ui_label(ship_nick) or ship_nick
+        model_path_txt = str(ship_model_paths_by_nick.get(ship_nick.lower(), "") or "").strip()
+        model_path = Path(model_path_txt) if model_path_txt else None
+        if model_path is not None:
+            sidebar_ship_preview.set_model_paths(
+                [model_path],
+                caption=preview_title,
+                meta=_tr_or(
+                    "savegame_editor.sidebar_ship_preview_active",
+                    "Current ship: {ship}",
+                ).format(ship=display_name),
+            )
+            return
+        sidebar_ship_preview.set_model_paths(
+            [],
+            caption=preview_title,
+            meta=_tr_or(
+                "savegame_editor.sidebar_ship_preview_missing",
+                "Current ship: {ship}. No ship model could be resolved for preview.",
+            ).format(ship=display_name),
+        )
+
     def _clear_maps() -> None:
         visited_scene.clear()
         empty = QRectF(0, 0, 1, 1)
@@ -3228,6 +3280,7 @@ def open_savegame_editor(self):
         _refresh_trent_preview()
         ship_archetype_cb.setCurrentIndex(-1)
         ship_archetype_cb.setEditText("")
+        _refresh_sidebar_ship_preview()
         for cb in core_component_cbs:
             cb.setCurrentIndex(-1)
             cb.setEditText("")
@@ -3282,6 +3335,7 @@ def open_savegame_editor(self):
             cargo_del_btn,
             right_tabs,
             validate_btn,
+            sidebar_ship_preview,
             validate_help_lbl,
             *trent_adjustment_widgets,
         ):
@@ -3325,6 +3379,7 @@ def open_savegame_editor(self):
             cargo_del_btn,
             right_tabs,
             validate_btn,
+            sidebar_ship_preview,
             validate_help_lbl,
             *trent_adjustment_widgets,
         ):
@@ -5039,6 +5094,7 @@ def open_savegame_editor(self):
             state["last_ship_nick"] = new_ship
             _refresh_ship_editor_lock()
             _refresh_cloak_visibility()
+            _refresh_sidebar_ship_preview()
             return
         if new_ship and new_ship.lower() != prev_ship.lower():
             _replace_ship_lights_for_ship_switch(prev_ship, new_ship)
@@ -5047,6 +5103,7 @@ def open_savegame_editor(self):
         state["last_ship_nick"] = new_ship
         _refresh_ship_editor_lock()
         _refresh_cloak_visibility()
+        _refresh_sidebar_ship_preview()
 
     def _collect_invalid_hardpoint_rows(
         ship_nick: str,
@@ -5662,6 +5719,7 @@ def open_savegame_editor(self):
             _set_item_combo_value(rh_cb, _merged_trent_value(righthand, com_righthand))
             _refresh_trent_preview()
             _set_item_combo_value(ship_archetype_cb, ship_archetype, add_missing=False)
+            _refresh_sidebar_ship_preview()
             _set_item_combo_value(core_power_cb, core_components.get("power", ("", "1"))[0])
             core_power_cb.setProperty("fl_extra", str(core_components.get("power", ("", "1"))[1] or "1"))
             _set_item_combo_value(core_engine_cb, core_components.get("engine", ("", "1"))[0])
@@ -5984,7 +6042,7 @@ def open_savegame_editor(self):
     def _load_game_data(target_game_path: str, *, reload_current_savegame: bool) -> bool:
         nonlocal game_path, faction_labels, templates, nickname_labels, numeric_id_map, costume_map
         nonlocal item_name_map, ship_nicks, equip_nicks, trent_nicks, trent_body_nicks
-        nonlocal trent_head_nicks, trent_lh_nicks, trent_rh_nicks, trent_model_paths_by_nick, ship_hardpoints_by_nick
+        nonlocal trent_head_nicks, trent_lh_nicks, trent_rh_nicks, trent_model_paths_by_nick, ship_model_paths_by_nick, ship_hardpoints_by_nick
         nonlocal ship_hp_types_by_hardpoint_by_nick
         nonlocal power_nicks, engine_nicks, scanner_nicks, tractor_nicks
         nonlocal cloak_nicks, cloak_mod_available, cloak_active
@@ -6029,6 +6087,9 @@ def open_savegame_editor(self):
         trent_rh_nicks = list(item_data_new.get("trent_rh_nicks", []) or [])
         trent_model_paths_by_nick = {
             str(k).lower(): str(v) for k, v in dict(item_data_new.get("trent_model_paths_by_nick", {}) or {}).items()
+        }
+        ship_model_paths_by_nick = {
+            str(k).lower(): str(v) for k, v in dict(item_data_new.get("ship_model_paths_by_nick", {}) or {}).items()
         }
         ship_hardpoints_by_nick = {
             str(k): list(v) for k, v in dict(item_data_new.get("ship_hardpoints_by_nick", {}) or {}).items()
