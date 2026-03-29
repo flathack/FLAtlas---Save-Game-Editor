@@ -2317,7 +2317,7 @@ def open_savegame_editor(self):
     menu_bar.setNativeMenuBar(False)
     menu_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
     menu_bar.setMinimumHeight(max(30, menu_bar.sizeHint().height() + 4))
-    lay.addWidget(menu_bar, 0)
+    lay.setMenuBar(menu_bar)
     file_menu = menu_bar.addMenu(tr("savegame_editor.menu.file"))
     edit_menu = menu_bar.addMenu(_tr_or("savegame_editor.menu.edit", "Edit"))
     view_menu = menu_bar.addMenu(_tr_or("savegame_editor.menu.view", "View"))
@@ -2464,6 +2464,7 @@ def open_savegame_editor(self):
     tab_reputation = QWidget(dlg)
     tab_trent = QWidget(dlg)
     tab_ship = QWidget(dlg)
+    tab_ship_view = QWidget(dlg)
     rep_l = QVBoxLayout(tab_reputation)
     rep_l.setContentsMargins(8, 8, 8, 8)
     rep_l.setSpacing(8)
@@ -2473,10 +2474,29 @@ def open_savegame_editor(self):
     ship_tab_l = QVBoxLayout(tab_ship)
     ship_tab_l.setContentsMargins(8, 8, 8, 8)
     ship_tab_l.setSpacing(8)
+    ship_view_l = QVBoxLayout(tab_ship_view)
+    ship_view_l.setContentsMargins(8, 8, 8, 8)
+    ship_view_l.setSpacing(8)
     right_tabs.addTab(tab_visited, tr("savegame_editor.map_tab.visited"))
     right_tabs.addTab(tab_reputation, tr("savegame_editor.tab.reputation"))
     right_tabs.addTab(tab_trent, tr("savegame_editor.tab.trent"))
     right_tabs.addTab(tab_ship, tr("savegame_editor.tab.ship"))
+    right_tabs.addTab(tab_ship_view, _tr_or("savegame_editor.tab.ship_view", "Ship View"))
+
+    def _set_right_tab_visible(tab_widget: QWidget, visible: bool) -> None:
+        index = right_tabs.indexOf(tab_widget)
+        if index < 0:
+            return
+        try:
+            right_tabs.setTabVisible(index, bool(visible))
+            return
+        except Exception:
+            pass
+        try:
+            right_tabs.tabBar().setTabVisible(index, bool(visible))
+        except Exception:
+            pass
+
     content_row.addWidget(sidebar, 0)
     content_row.addWidget(right_tabs, 1)
     content_row.setStretch(0, 0)
@@ -2523,18 +2543,17 @@ def open_savegame_editor(self):
     form.addRow("", story_lock_lbl)
     sidebar_l.addLayout(form)
     validate_btn = QPushButton(tr("savegame_editor.validate"), dlg)
-    sidebar_l.addWidget(validate_btn)
+    validate_help_text = tr("savegame_editor.validate_help")
+    validate_btn.setToolTip(validate_help_text)
+    validate_btn.setStatusTip(validate_help_text)
     sidebar_ship_preview = FreelancerModelPreviewWidget(
         _tr_or("savegame_editor.sidebar_ship_preview", "Player Ship Preview"),
         dlg,
     )
     sidebar_ship_preview.set_render_style(flat_gray_material=True, wireframe_overlay=True)
+    sidebar_ship_preview.set_compact_mode(True)
     sidebar_ship_preview.setMinimumHeight(260)
     sidebar_l.addWidget(sidebar_ship_preview)
-    validate_help_lbl = QLabel(tr("savegame_editor.validate_help"), dlg)
-    validate_help_lbl.setWordWrap(True)
-    validate_help_lbl.setStyleSheet("color: #9aa0a6;")
-    sidebar_l.addWidget(validate_help_lbl)
     sidebar_l.addStretch(1)
 
     locked_scene = QGraphicsScene(tab_locked)
@@ -2563,6 +2582,16 @@ def open_savegame_editor(self):
     visited_btn_row.addWidget(visit_unlock_all_btn)
     visited_btn_row.addWidget(visit_reveal_all_btn)
     visited_map_l.addLayout(visited_btn_row)
+    visited_port_hint_lbl = QLabel(
+        _tr_or(
+            "savegame_editor.visited_port_hint",
+            "Tip: Click a system on the map to port your ship there.",
+        ),
+        tab_visited,
+    )
+    visited_port_hint_lbl.setWordWrap(True)
+    visited_port_hint_lbl.setStyleSheet("color: #9aa0a6;")
+    visited_map_l.addWidget(visited_port_hint_lbl)
 
     def _map_colors_for_theme(theme_name: str) -> dict[str, QColor]:
         t = str(theme_name or "Light").strip()
@@ -2946,6 +2975,30 @@ def open_savegame_editor(self):
     ]
     ship_tab_l.addWidget(ship_box, 1)
 
+    ship_view_form = QFormLayout()
+    ship_view_ship_cb = QComboBox(dlg)
+    ship_view_ship_cb.setEditable(True)
+    ship_view_form.addRow(_tr_or("savegame_editor.ship_view_archetype", "Ship:"), ship_view_ship_cb)
+    ship_view_l.addLayout(ship_view_form)
+    ship_view_3d = FreelancerModelPreviewWidget(
+        _tr_or("savegame_editor.ship_view_preview", "Ship View"),
+        dlg,
+    )
+    ship_view_3d.set_render_style(flat_gray_material=True, wireframe_overlay=True)
+    ship_view_3d.setMinimumHeight(720)
+    ship_view_l.addWidget(ship_view_3d, 1)
+
+    preview_widgets = [sidebar_ship_preview, trent_character_3d, ship_view_3d]
+
+    def _refresh_3d_preview_themes(theme_name: str | None = None) -> None:
+        light_mode = None if theme_name is None else str(theme_name or "Dark").strip() == "Light"
+        for preview_widget in preview_widgets:
+            try:
+                preview_widget.set_theme_mode(light_mode)
+                preview_widget.refresh_theme()
+            except Exception:
+                pass
+
     houses_lbl = QLabel(tr("savegame_editor.houses"))
     rep_l.addWidget(houses_lbl)
     houses_filter_edit = QLineEdit(dlg)
@@ -2967,8 +3020,10 @@ def open_savegame_editor(self):
     bottom_row = QHBoxLayout()
     bottom_row.addStretch(1)
     save_btn = QPushButton(tr("savegame_editor.save"), dlg)
+    validate_btn.setParent(dlg)
     close_btn = QPushButton(tr("dlg.close"), dlg)
     bottom_row.addWidget(save_btn)
+    bottom_row.addWidget(validate_btn)
     bottom_row.addWidget(close_btn)
     lay.addLayout(bottom_row)
     footer = QLabel(
@@ -3242,6 +3297,49 @@ def open_savegame_editor(self):
             ).format(ship=display_name),
         )
 
+    def _refresh_ship_view_preview() -> None:
+        ship_nick = _current_ship_view_nick().strip()
+        preview_title = _tr_or("savegame_editor.ship_view_preview", "Ship View")
+        if not ship_nick:
+            ship_view_3d.set_model_paths(
+                [],
+                caption=preview_title,
+                meta=_tr_or(
+                    "savegame_editor.ship_view_empty",
+                    "Choose a ship to inspect it in the viewer.",
+                ),
+            )
+            return
+        display_name = _item_ui_label(ship_nick) or ship_nick
+        model_path_txt = str(ship_model_paths_by_nick.get(ship_nick.lower(), "") or "").strip()
+        model_path = Path(model_path_txt) if model_path_txt else None
+        if model_path is not None:
+            ship_view_3d.set_model_paths(
+                [model_path],
+                caption=preview_title,
+                meta=_tr_or(
+                    "savegame_editor.ship_view_active",
+                    "Viewing ship: {ship}",
+                ).format(ship=display_name),
+            )
+            return
+        ship_view_3d.set_model_paths(
+            [],
+            caption=preview_title,
+            meta=_tr_or(
+                "savegame_editor.ship_view_missing",
+                "No ship model could be resolved for {ship}.",
+            ).format(ship=display_name),
+        )
+
+    def _sync_ship_view_selection_to_current_ship() -> None:
+        ship_nick = _current_ship_nick().strip()
+        if ship_nick:
+            _set_item_combo_value(ship_view_ship_cb, ship_nick, add_missing=False)
+        elif ship_view_ship_cb.count() > 1 and not _current_ship_view_nick().strip():
+            ship_view_ship_cb.setCurrentIndex(1)
+        _refresh_ship_view_preview()
+
     def _clear_maps() -> None:
         visited_scene.clear()
         empty = QRectF(0, 0, 1, 1)
@@ -3281,6 +3379,12 @@ def open_savegame_editor(self):
         ship_archetype_cb.setCurrentIndex(-1)
         ship_archetype_cb.setEditText("")
         _refresh_sidebar_ship_preview()
+        if ship_view_ship_cb.count() > 1:
+            ship_view_ship_cb.setCurrentIndex(1)
+        else:
+            ship_view_ship_cb.setCurrentIndex(-1)
+            ship_view_ship_cb.setEditText("")
+        _refresh_ship_view_preview()
         for cb in core_component_cbs:
             cb.setCurrentIndex(-1)
             cb.setEditText("")
@@ -3333,13 +3437,17 @@ def open_savegame_editor(self):
             equip_autofix_btn,
             cargo_add_btn,
             cargo_del_btn,
-            right_tabs,
             validate_btn,
             sidebar_ship_preview,
-            validate_help_lbl,
             *trent_adjustment_widgets,
         ):
             w.setEnabled(False)
+        right_tabs.setEnabled(True)
+        _set_right_tab_visible(tab_visited, False)
+        _set_right_tab_visible(tab_ship_view, True)
+        ship_view_ship_cb.setEnabled(True)
+        ship_view_3d.setEnabled(True)
+        right_tabs.setCurrentWidget(tab_ship_view)
         act_file_reload.setEnabled(False)
         act_file_save.setEnabled(False)
 
@@ -3377,13 +3485,17 @@ def open_savegame_editor(self):
             equip_autofix_btn,
             cargo_add_btn,
             cargo_del_btn,
-            right_tabs,
             validate_btn,
             sidebar_ship_preview,
-            validate_help_lbl,
+            ship_view_ship_cb,
+            ship_view_3d,
             *trent_adjustment_widgets,
         ):
             w.setEnabled(True)
+        right_tabs.setEnabled(True)
+        _set_right_tab_visible(tab_visited, True)
+        _set_right_tab_visible(tab_ship_view, True)
+        right_tabs.setCurrentWidget(tab_visited)
         template_cb.setEnabled(bool(templates))
         apply_template_btn.setEnabled(bool(templates))
         ship_template_cb.setEnabled(bool(ship_package_templates_cache))
@@ -4128,6 +4240,9 @@ def open_savegame_editor(self):
     def _current_ship_nick() -> str:
         return _combo_item_nick(ship_archetype_cb)
 
+    def _current_ship_view_nick() -> str:
+        return _combo_item_nick(ship_view_ship_cb)
+
     def _ship_hardpoints(ship_nick: str) -> list[str]:
         return list(ship_hardpoints_by_nick.get(str(ship_nick or "").strip().lower(), []))
 
@@ -4136,6 +4251,10 @@ def open_savegame_editor(self):
 
     def _compatible_ship_nicks() -> list[str]:
         return [nick for nick in ship_nicks if _is_ship_compatible(nick)]
+
+    def _previewable_ship_nicks() -> list[str]:
+        previewable = [nick for nick in ship_nicks if str(nick).strip().lower() in ship_model_paths_by_nick]
+        return previewable or list(ship_nicks)
 
     def _equip_type(nick: str) -> str:
         return str(equip_type_by_nick.get(str(nick or "").strip().lower(), "") or "").strip().lower()
@@ -4589,6 +4708,9 @@ def open_savegame_editor(self):
             _refresh_hardpoint_hint()
 
     _setup_item_combo(ship_archetype_cb, _compatible_ship_nicks())
+    _setup_item_combo(ship_view_ship_cb, _previewable_ship_nicks())
+    if ship_view_ship_cb.count() > 1:
+        ship_view_ship_cb.setCurrentIndex(1)
     _setup_item_combo(core_power_cb, power_nicks)
     _setup_item_combo(core_engine_cb, engine_nicks)
     _setup_item_combo(core_scanner_cb, scanner_nicks)
@@ -5095,6 +5217,7 @@ def open_savegame_editor(self):
             _refresh_ship_editor_lock()
             _refresh_cloak_visibility()
             _refresh_sidebar_ship_preview()
+            _sync_ship_view_selection_to_current_ship()
             return
         if new_ship and new_ship.lower() != prev_ship.lower():
             _replace_ship_lights_for_ship_switch(prev_ship, new_ship)
@@ -5104,6 +5227,7 @@ def open_savegame_editor(self):
         _refresh_ship_editor_lock()
         _refresh_cloak_visibility()
         _refresh_sidebar_ship_preview()
+        _sync_ship_view_selection_to_current_ship()
 
     def _collect_invalid_hardpoint_rows(
         ship_nick: str,
@@ -5720,6 +5844,7 @@ def open_savegame_editor(self):
             _refresh_trent_preview()
             _set_item_combo_value(ship_archetype_cb, ship_archetype, add_missing=False)
             _refresh_sidebar_ship_preview()
+            _sync_ship_view_selection_to_current_ship()
             _set_item_combo_value(core_power_cb, core_components.get("power", ("", "1"))[0])
             core_power_cb.setProperty("fl_extra", str(core_components.get("power", ("", "1"))[1] or "1"))
             _set_item_combo_value(core_engine_cb, core_components.get("engine", ("", "1"))[0])
@@ -6163,6 +6288,15 @@ def open_savegame_editor(self):
         ship_archetype_cb.clear()
         _setup_item_combo(ship_archetype_cb, _compatible_ship_nicks())
         ship_archetype_cb.blockSignals(False)
+        ship_view_current = _current_ship_view_nick()
+        ship_view_ship_cb.blockSignals(True)
+        ship_view_ship_cb.clear()
+        _setup_item_combo(ship_view_ship_cb, _previewable_ship_nicks())
+        _set_item_combo_value(ship_view_ship_cb, ship_view_current, add_missing=False)
+        if not _current_ship_view_nick().strip() and ship_view_ship_cb.count() > 1:
+            ship_view_ship_cb.setCurrentIndex(1)
+        ship_view_ship_cb.blockSignals(False)
+        _refresh_ship_view_preview()
         core_current = [_combo_item_nick(cb) for cb in core_component_cbs]
         core_sources: list[tuple[QComboBox, list[str]]] = [
             (core_power_cb, power_nicks),
@@ -7279,6 +7413,8 @@ def open_savegame_editor(self):
 
     ship_archetype_cb.currentIndexChanged.connect(lambda _idx: _on_ship_changed())
     ship_archetype_cb.currentTextChanged.connect(lambda _txt: _on_ship_changed())
+    ship_view_ship_cb.currentIndexChanged.connect(lambda _idx: _refresh_ship_view_preview())
+    ship_view_ship_cb.currentTextChanged.connect(lambda _txt: _refresh_ship_view_preview())
     for _trent_cb in trent_item_cbs:
         _trent_cb.currentIndexChanged.connect(lambda _idx, cb=_trent_cb: _refresh_trent_preview())
         _trent_cb.currentTextChanged.connect(lambda _txt, cb=_trent_cb: _refresh_trent_preview())
@@ -7462,6 +7598,7 @@ def open_savegame_editor(self):
         finally:
             dlg.setUpdatesEnabled(True)
             dlg.update()
+        _refresh_3d_preview_themes(tname)
         _apply_map_theme(tname)
         _render_visited_map(set(state.get("visit_ids", set()) or set()))
         self._cfg.set("settings.theme", tname)
@@ -7477,6 +7614,7 @@ def open_savegame_editor(self):
     for name, act in theme_actions.items():
         act.triggered.connect(lambda _checked=False, n=name: _apply_theme(n))
     dlg.setStyleSheet(THEME_STYLES.get(current_theme, "") + "\n" + THEME_FONT_LOCK_QSS)
+    _refresh_3d_preview_themes(current_theme)
     _apply_map_theme(current_theme)
     for name, act in theme_actions.items():
         try:
@@ -7486,6 +7624,12 @@ def open_savegame_editor(self):
     visited_view.on_system_click = _select_system_from_map
     _update_trent_adjustment_labels()
     _refresh_trent_preview()
+
+    if str(game_path or "").strip():
+        try:
+            _load_game_data(game_path, reload_current_savegame=False)
+        except Exception:
+            pass
 
     _refresh_savegame_list(auto_load=False)
     _set_no_savegame_state()

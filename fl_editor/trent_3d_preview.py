@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 from struct import pack, unpack_from
 import sys
@@ -239,6 +239,64 @@ def _merge_bounds(bounds_list: list[_SimpleBounds | None]) -> _SimpleBounds | No
         (max_xyz[0], min_xyz[1], max_xyz[2]),
         (min_xyz[0], max_xyz[1], max_xyz[2]),
     ])
+
+
+def _double_sided_native_geometry(geometry):
+    indices = tuple(int(index) for index in (getattr(geometry, "indices", ()) or ()))
+    if len(indices) < 3:
+        return geometry
+    doubled: list[int] = list(indices)
+    for offset in range(0, len(indices) - 2, 3):
+        a, b, c = indices[offset], indices[offset + 1], indices[offset + 2]
+        doubled.extend((a, c, b))
+    try:
+        return replace(geometry, indices=tuple(doubled))
+    except Exception:
+        try:
+            clone = types.SimpleNamespace(**getattr(geometry, "__dict__", {}))
+            clone.indices = tuple(doubled)
+            return clone
+        except Exception:
+            return geometry
+
+
+def _configure_line_wireframe_material(material) -> list[object]:
+    refs: list[object] = []
+    try:
+        import PySide6.Qt3DRender as _Qt3DRender
+
+        render_ns = getattr(_Qt3DRender, "Qt3DRender", _Qt3DRender)
+        depth_cls = getattr(render_ns, "QDepthTest", None)
+        no_depth_mask_cls = getattr(render_ns, "QNoDepthMask", None)
+        line_width_cls = getattr(render_ns, "QLineWidth", None)
+        effect = material.effect() if hasattr(material, "effect") else None
+        if effect is None:
+            return refs
+        for technique in list(effect.techniques() if hasattr(effect, "techniques") else []):
+            for render_pass in list(technique.renderPasses() if hasattr(technique, "renderPasses") else []):
+                if depth_cls is not None:
+                    depth_state = depth_cls(render_pass)
+                    depth_fn = getattr(depth_cls, "Always", None)
+                    if depth_fn is None:
+                        enum_cls = getattr(depth_cls, "DepthFunction", None)
+                        depth_fn = getattr(enum_cls, "Always", None) if enum_cls is not None else None
+                    if depth_fn is not None and hasattr(depth_state, "setDepthFunction"):
+                        depth_state.setDepthFunction(depth_fn)
+                    render_pass.addRenderState(depth_state)
+                    refs.append(depth_state)
+                if no_depth_mask_cls is not None:
+                    no_depth_mask = no_depth_mask_cls(render_pass)
+                    render_pass.addRenderState(no_depth_mask)
+                    refs.append(no_depth_mask)
+                if line_width_cls is not None:
+                    line_width = line_width_cls(render_pass)
+                    if hasattr(line_width, "setValue"):
+                        line_width.setValue(1.5)
+                    render_pass.addRenderState(line_width)
+                    refs.append(line_width)
+    except Exception:
+        return refs
+    return refs
 
 
 @dataclass(frozen=True)
@@ -892,6 +950,8 @@ class FreelancerModelPreviewWidget(QWidget):
         self._last_meta = ""
         self._force_flat_gray_material = False
         self._show_wireframe_overlay = False
+        self._force_light_mode: bool | None = None
+        self._compact_mode = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -899,42 +959,42 @@ class FreelancerModelPreviewWidget(QWidget):
 
         self._card = QFrame(self)
         self._card.setObjectName("trentPreviewCard")
-        card_layout = QVBoxLayout(self._card)
-        card_layout.setContentsMargins(10, 10, 10, 10)
-        card_layout.setSpacing(8)
+        self._card_layout = QVBoxLayout(self._card)
+        self._card_layout.setContentsMargins(10, 10, 10, 10)
+        self._card_layout.setSpacing(8)
         layout.addWidget(self._card)
 
         self._eyebrow_label = QLabel(self._title.upper(), self._card)
         self._eyebrow_label.setObjectName("trentPreviewEyebrow")
-        card_layout.addWidget(self._eyebrow_label)
+        self._card_layout.addWidget(self._eyebrow_label)
 
         self._title_label = QLabel(self._title, self._card)
         self._title_label.setObjectName("trentPreviewTitle")
         self._title_label.setWordWrap(True)
-        card_layout.addWidget(self._title_label)
+        self._card_layout.addWidget(self._title_label)
 
         self._meta_label = QLabel("Waiting for selection", self._card)
         self._meta_label.setObjectName("trentPreviewMeta")
         self._meta_label.setWordWrap(True)
-        card_layout.addWidget(self._meta_label)
+        self._card_layout.addWidget(self._meta_label)
 
         self._status_label = QLabel("", self._card)
         self._status_label.setObjectName("trentPreviewStatus")
         self._status_label.setWordWrap(True)
         self._status_label.setAlignment(Qt.AlignCenter)
         self._status_label.setMinimumHeight(180)
-        card_layout.addWidget(self._status_label, 1)
+        self._card_layout.addWidget(self._status_label, 1)
 
         self._hint_label = QLabel("Drag to orbit, wheel to zoom.", self._card)
         self._hint_label.setObjectName("trentPreviewHint")
         self._hint_label.setWordWrap(True)
-        card_layout.addWidget(self._hint_label)
+        self._card_layout.addWidget(self._hint_label)
 
         self._reset_btn = QPushButton("Reset Camera", self._card)
         self._reset_btn.setObjectName("trentPreviewResetButton")
         self._reset_btn.setVisible(False)
         self._reset_btn.clicked.connect(self._reset_camera)
-        card_layout.addWidget(self._reset_btn, 0, Qt.AlignRight)
+        self._card_layout.addWidget(self._reset_btn, 0, Qt.AlignRight)
 
         self._apply_styles()
 
@@ -953,7 +1013,7 @@ class FreelancerModelPreviewWidget(QWidget):
         self._container.setMinimumHeight(220)
         self._container.setFocusPolicy(Qt.StrongFocus)
         self._container.setObjectName("trentPreviewViewport")
-        card_layout.insertWidget(3, self._container, 1)
+        self._card_layout.insertWidget(3, self._container, 1)
         self._status_label.hide()
         self._reset_btn.setVisible(True)
 
@@ -990,15 +1050,76 @@ class FreelancerModelPreviewWidget(QWidget):
     def set_preview_adjustments(self, adjustments: dict[str, object] | None) -> None:
         self._preview_adjustments = _normalized_preview_adjustments(adjustments)
 
-    def set_render_style(self, *, flat_gray_material: bool = False, wireframe_overlay: bool = False) -> None:
+    def set_render_style(
+        self,
+        *,
+        flat_gray_material: bool = False,
+        wireframe_overlay: bool = False,
+        light_mode: bool | None = None,
+    ) -> None:
         flat_gray = bool(flat_gray_material)
         wireframe = bool(wireframe_overlay)
-        if flat_gray == self._force_flat_gray_material and wireframe == self._show_wireframe_overlay:
+        force_light_mode = None if light_mode is None else bool(light_mode)
+        if (
+            flat_gray == self._force_flat_gray_material
+            and wireframe == self._show_wireframe_overlay
+            and force_light_mode == self._force_light_mode
+        ):
             return
         self._force_flat_gray_material = flat_gray
         self._show_wireframe_overlay = wireframe
+        self._force_light_mode = force_light_mode
+        self._apply_background_color()
+        self._last_style_key = None
+        self._apply_styles()
         if self._last_model_paths:
             self.set_model_paths(self._last_model_paths, caption=self._last_caption, meta=self._last_meta)
+
+    def refresh_theme(self) -> None:
+        self._apply_background_color()
+        self._last_style_key = None
+        self._apply_styles()
+        if self._force_flat_gray_material and self._last_model_paths:
+            self.set_model_paths(self._last_model_paths, caption=self._last_caption, meta=self._last_meta)
+        if self._container is not None:
+            try:
+                self._container.update()
+            except Exception:
+                pass
+
+    def set_theme_mode(self, light_mode: bool | None) -> None:
+        normalized_mode = None if light_mode is None else bool(light_mode)
+        if normalized_mode == self._force_light_mode:
+            self.refresh_theme()
+            return
+        self._force_light_mode = normalized_mode
+        self.refresh_theme()
+
+    def _theme_is_light(self) -> bool:
+        if self._force_light_mode is not None:
+            return bool(self._force_light_mode)
+        try:
+            return self.palette().window().color().lightnessF() >= 0.5
+        except Exception:
+            return False
+
+    def set_compact_mode(self, compact: bool = True) -> None:
+        compact_mode = bool(compact)
+        if compact_mode == self._compact_mode:
+            return
+        self._compact_mode = compact_mode
+        self._eyebrow_label.setVisible(not compact_mode)
+        self._title_label.setVisible(not compact_mode)
+        self._meta_label.setVisible(not compact_mode)
+        self._hint_label.setVisible(not compact_mode)
+        if compact_mode:
+            self._card_layout.setContentsMargins(0, 0, 0, 0)
+            self._card_layout.setSpacing(6)
+        else:
+            self._card_layout.setContentsMargins(10, 10, 10, 10)
+            self._card_layout.setSpacing(8)
+        self._last_style_key = None
+        self._apply_styles()
 
     def set_model_paths(self, model_paths: list[Path | None], *, caption: str = "", meta: str = "") -> None:
         self._last_model_paths = list(model_paths or [])
@@ -1094,12 +1215,33 @@ class FreelancerModelPreviewWidget(QWidget):
         try:
             qt3d = sys.modules[f"{_BRIDGE_PACKAGE}.qt3d_compat"]
             entity = qt3d.QEntity3D(self._root)
-            renderer = qt3d_mod.build_native_geometry_renderer(geometry, owner=entity)
+            render_geometry = _double_sided_native_geometry(geometry) if self._force_flat_gray_material else geometry
+            renderer = qt3d_mod.build_native_geometry_renderer(render_geometry, owner=entity)
             if self._force_flat_gray_material:
-                material = qt3d.QPhongMaterial3D(entity)
-                material.setAmbient(QColor(150, 150, 150))
-                material.setDiffuse(QColor(208, 208, 208))
-                material.setSpecular(QColor(72, 72, 72))
+                light_mode = self._theme_is_light()
+                alpha_material_cls = getattr(qt3d, "QPhongAlphaMaterial3D", None)
+                if alpha_material_cls is not None:
+                    material = alpha_material_cls(entity)
+                    if hasattr(material, "setAlpha"):
+                        material.setAlpha(0.72)
+                    if light_mode:
+                        material.setAmbient(QColor(88, 88, 88))
+                        material.setDiffuse(QColor(122, 122, 122))
+                        material.setSpecular(QColor(28, 28, 28))
+                    else:
+                        material.setAmbient(QColor(132, 132, 132))
+                        material.setDiffuse(QColor(196, 196, 196))
+                        material.setSpecular(QColor(56, 56, 56))
+                else:
+                    material = qt3d.QPhongMaterial3D(entity)
+                    if light_mode:
+                        material.setAmbient(QColor(88, 88, 88, 184))
+                        material.setDiffuse(QColor(122, 122, 122, 184))
+                        material.setSpecular(QColor(28, 28, 28, 184))
+                    else:
+                        material.setAmbient(QColor(132, 132, 132, 184))
+                        material.setDiffuse(QColor(196, 196, 196, 184))
+                        material.setSpecular(QColor(56, 56, 56, 184))
                 if hasattr(material, "setShininess"):
                     material.setShininess(8.0)
                 if hasattr(qt3d_mod, "_disable_backface_culling"):
@@ -1127,7 +1269,10 @@ class FreelancerModelPreviewWidget(QWidget):
                 wire_material.setSpecular(QColor(0, 0, 0))
                 if hasattr(wire_material, "setShininess"):
                     wire_material.setShininess(1.0)
+                self._material_refs.extend(_configure_line_wireframe_material(wire_material))
                 wire_transform = qt3d.QTransform3D(wire_entity)
+                if hasattr(wire_transform, "setScale"):
+                    wire_transform.setScale(1.001)
                 wire_entity.addComponent(wire_renderer)
                 wire_entity.addComponent(wire_material)
                 wire_entity.addComponent(wire_transform)
@@ -1310,8 +1455,12 @@ class FreelancerModelPreviewWidget(QWidget):
             return
         frame_graph = getattr(self._view3d, "defaultFrameGraph", lambda: None)()
         try:
-            dark_theme = self.palette().window().color().lightnessF() < 0.5
-            color = QColor(13, 17, 24) if dark_theme else QColor(241, 244, 247)
+            if self._force_flat_gray_material:
+                color = QColor(255, 255, 255) if self._theme_is_light() else QColor(13, 17, 24)
+            elif self._theme_is_light():
+                color = QColor(241, 244, 247)
+            else:
+                color = QColor(13, 17, 24)
             if frame_graph is not None and hasattr(frame_graph, "setClearColor"):
                 frame_graph.setClearColor(color)
         except Exception:
@@ -1326,14 +1475,47 @@ class FreelancerModelPreviewWidget(QWidget):
     def _apply_styles(self) -> None:
         if self._style_update_in_progress:
             return
-        dark_theme = self.palette().window().color().lightnessF() < 0.5
-        if dark_theme:
+        dark_theme = not self._theme_is_light()
+        if self._force_flat_gray_material and self._compact_mode:
+            card_bg = "transparent"
+            border = "transparent"
+            title = "transparent"
+            meta = "transparent"
+            hint = "transparent"
+            status_bg = "#ffffff" if not dark_theme else "rgba(8, 10, 14, 0.96)"
+            viewport_border = "transparent"
+        elif self._force_flat_gray_material:
+            if dark_theme:
+                card_bg = "rgba(255, 255, 255, 0.04)"
+                border = "#3a4554"
+                title = "#eef1f5"
+                meta = "#9aa8b7"
+                hint = "#91a0af"
+                status_bg = "rgba(8, 10, 14, 0.96)"
+            else:
+                card_bg = "rgba(255, 255, 255, 0.98)"
+                border = "#d6d6d6"
+                title = "#202020"
+                meta = "#5f5f5f"
+                hint = "#6b6b6b"
+                status_bg = "#ffffff"
+            viewport_border = border
+        elif self._compact_mode:
+            card_bg = "transparent"
+            border = "transparent"
+            title = "transparent"
+            meta = "transparent"
+            hint = "transparent"
+            status_bg = "rgba(8, 10, 14, 0.96)"
+            viewport_border = "transparent"
+        elif dark_theme:
             card_bg = "rgba(255, 255, 255, 0.04)"
             border = "#3a4554"
             title = "#eef1f5"
             meta = "#9aa8b7"
             hint = "#91a0af"
             status_bg = "rgba(255, 255, 255, 0.03)"
+            viewport_border = border
         else:
             card_bg = "rgba(255, 255, 255, 0.92)"
             border = "#c8d0d9"
@@ -1341,6 +1523,7 @@ class FreelancerModelPreviewWidget(QWidget):
             meta = "#5a6978"
             hint = "#627181"
             status_bg = "rgba(21, 32, 43, 0.035)"
+            viewport_border = border
         style_key = (dark_theme, card_bg, border)
         if style_key == self._last_style_key:
             return
@@ -1378,7 +1561,7 @@ QLabel#trentPreviewStatus {{
     padding: 14px;
 }}
 QWidget#trentPreviewViewport {{
-    border: 1px solid {border};
+    border: 1px solid {viewport_border};
     background: {status_bg};
 }}
 QPushButton#trentPreviewResetButton {{
