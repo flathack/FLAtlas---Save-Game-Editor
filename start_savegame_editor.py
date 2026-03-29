@@ -8,6 +8,8 @@ from pathlib import Path
 
 from fl_editor.version import APP_VERSION
 
+ENABLE_TRENT_PREVIEW_CALIBRATION = False
+
 def _python_has_pefile(python_exe: str) -> bool:
     try:
         proc = subprocess.run(
@@ -50,6 +52,7 @@ if __name__ == "__main__":
     if any(arg in ("--version", "-V") for arg in sys.argv[1:]):
         print(APP_VERSION)
         raise SystemExit(0)
+    os.environ["FLATLAS_ENABLE_TRENT_PREVIEW_CALIBRATION"] = "1" if ENABLE_TRENT_PREVIEW_CALIBRATION else "0"
     _maybe_reexec_with_pefile_python()
     from fl_editor.savegame_editor import run_standalone
 

@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QFormLayout,
+    QGridLayout,
     QGraphicsScene,
     QGroupBox,
     QGraphicsView,
@@ -66,11 +67,13 @@ from .parser import FLParser, find_all_systems
 from .path_utils import ci_find, ci_resolve, ci_resolve_any
 from .dll_resources import DllStringResolver
 from .version import APP_VERSION
+from .trent_3d_preview import FreelancerModelPreviewWidget, bridge_available as trent_3d_bridge_available
 
 SAVEGAME_EDITOR_VERSION = APP_VERSION
 DISCORD_INVITE_URL = "https://discord.gg/RENtMMcc"
 BUG_REPORT_URL = "https://github.com/flathack/FLAtlas/issues"
 GITHUB_RELEASES_API = "https://api.github.com/repos/flathack/FLAtlas---Save-Game-Editor/releases?per_page=30"
+TRENT_PREVIEW_CALIBRATION_ENABLED = str(os.environ.get("FLATLAS_ENABLE_TRENT_PREVIEW_CALIBRATION", "0") or "0").strip().lower() in {"1", "true", "yes", "on"}
 
 THEME_ORDER = [
     "Light",
@@ -1922,6 +1925,7 @@ class _SavegameEditorHost(QMainWindow):
             "trent_head_nicks": [],
             "trent_lh_nicks": [],
             "trent_rh_nicks": [],
+            "trent_model_paths_by_nick": {},
             "ship_hardpoints_by_nick": {},
             "ship_hp_types_by_hardpoint_by_nick": {},
             "equip_type_by_nick": {},
@@ -1946,12 +1950,29 @@ class _SavegameEditorHost(QMainWindow):
         trent_head_nicks: list[str] = []
         trent_lh_nicks: list[str] = []
         trent_rh_nicks: list[str] = []
+        trent_model_paths_by_nick: dict[str, str] = {}
         ship_hardpoints_by_nick: dict[str, list[str]] = {}
         ship_hp_types_by_hardpoint_by_nick: dict[str, dict[str, list[str]]] = {}
         equip_type_by_nick: dict[str, str] = {}
         equip_source_file_by_nick: dict[str, str] = {}
         equip_hp_types_by_nick: dict[str, list[str]] = {}
         equip_goods_source_by_nick: dict[str, str] = self._savegame_editor_goods_source_by_equip_nick(root_path)
+
+        def _resolve_data_model_path(raw_value: str) -> str:
+            raw = str(raw_value or "").strip()
+            if not raw:
+                return ""
+            rel = raw.replace("\\", "/").lstrip("/")
+            candidate = ci_resolve_any(root_path, rel)
+            if candidate and candidate.is_file():
+                return str(candidate)
+            if rel.lower().startswith("data/"):
+                candidate = ci_resolve_any(root_path, rel[5:])
+            else:
+                candidate = ci_resolve_any(root_path, f"DATA/{rel}")
+            if candidate and candidate.is_file():
+                return str(candidate)
+            return ""
 
         def _expand_hp_type_aliases(hp_type: str) -> set[str]:
             raw = str(hp_type or "").strip().lower()
@@ -2057,6 +2078,12 @@ class _SavegameEditorHost(QMainWindow):
                     if not nick:
                         continue
                     key = nick.lower()
+                    model_path = _resolve_data_model_path(
+                        self._entry_get_value(entries, "da_archetype").strip()
+                        or self._entry_get_value(entries, "mesh").strip()
+                    )
+                    if model_path and key not in trent_model_paths_by_nick:
+                        trent_model_paths_by_nick[key] = model_path
                     if key in seen_trent:
                         continue
                     seen_trent.add(key)
@@ -2099,6 +2126,7 @@ class _SavegameEditorHost(QMainWindow):
             "trent_head_nicks": sorted(set(trent_head_nicks), key=str.lower),
             "trent_lh_nicks": sorted(set(trent_lh_nicks), key=str.lower),
             "trent_rh_nicks": sorted(set(trent_rh_nicks), key=str.lower),
+            "trent_model_paths_by_nick": dict(trent_model_paths_by_nick),
             "ship_hardpoints_by_nick": dict(ship_hardpoints_by_nick),
             "ship_hp_types_by_hardpoint_by_nick": dict(ship_hp_types_by_hardpoint_by_nick),
             "equip_type_by_nick": dict(equip_type_by_nick),
@@ -2610,7 +2638,23 @@ def open_savegame_editor(self):
         "visit_counts": {"systems": 0, "objects": 0, "zones": 0},
     }
 
-    trent_form = QFormLayout()
+    def _make_trent_adjustment_slider(
+        parent: QWidget,
+        *,
+        minimum: int,
+        maximum: int,
+        scale: float,
+    ) -> tuple[QSlider, QLabel, float]:
+        slider = QSlider(Qt.Horizontal, parent)
+        slider.setRange(int(minimum), int(maximum))
+        slider.setSingleStep(1)
+        slider.setPageStep(max(1, int((maximum - minimum) / 10)))
+        slider.setValue(0)
+        value_lbl = QLabel("0.00", parent)
+        value_lbl.setMinimumWidth(48)
+        value_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        return slider, value_lbl, float(scale)
+
     body_cb = QComboBox(dlg)
     head_cb = QComboBox(dlg)
     lh_cb = QComboBox(dlg)
@@ -2618,17 +2662,108 @@ def open_savegame_editor(self):
     trent_item_cbs = [body_cb, head_cb, lh_cb, rh_cb]
     for cb in trent_item_cbs:
         cb.setEditable(True)
-    trent_form.addRow(tr("savegame_editor.trent.body"), body_cb)
-    trent_form.addRow(tr("savegame_editor.trent.head"), head_cb)
-    trent_form.addRow(tr("savegame_editor.trent.lh"), lh_cb)
-    trent_form.addRow(tr("savegame_editor.trent.rh"), rh_cb)
-    trent_l.addLayout(trent_form)
+    trent_controls_row = QWidget(dlg)
+    trent_controls_layout = QGridLayout(trent_controls_row)
+    trent_controls_layout.setContentsMargins(0, 0, 0, 0)
+    trent_controls_layout.setHorizontalSpacing(10)
+    trent_controls_layout.setVerticalSpacing(4)
+    for column, (label_text, cb) in enumerate(
+        [
+            (tr("savegame_editor.trent.body"), body_cb),
+            (tr("savegame_editor.trent.head"), head_cb),
+            (tr("savegame_editor.trent.lh"), lh_cb),
+            (tr("savegame_editor.trent.rh"), rh_cb),
+        ]
+    ):
+        field_lbl = QLabel(label_text, trent_controls_row)
+        field_lbl.setStyleSheet("font-weight: 600;")
+        trent_controls_layout.addWidget(field_lbl, 0, column)
+        trent_controls_layout.addWidget(cb, 1, column)
+        trent_controls_layout.setColumnStretch(column, 1)
+    trent_l.addWidget(trent_controls_row)
+    trent_3d_status_lbl = QLabel(dlg)
+    trent_3d_status_lbl.setWordWrap(True)
+    trent_3d_status_lbl.setStyleSheet("color: #9aa0a6; padding-top: 2px; padding-bottom: 2px;")
+    trent_l.addWidget(trent_3d_status_lbl)
+    trent_calibration_log_path = Path(__file__).resolve().parents[1] / "trent_preview_calibration.log"
+    trent_adjustment_controls: dict[str, dict[str, tuple[QSlider, QLabel, float]]] = {}
+    trent_adjustment_widgets: list[QWidget] = []
+    trent_calibration_box = QGroupBox(_tr_or("savegame_editor.trent_preview_calibration_group", "Preview Calibration (Temporary)"), dlg)
+    trent_calibration_l = QVBoxLayout(trent_calibration_box)
+    trent_calibration_l.setContentsMargins(8, 8, 8, 8)
+    trent_calibration_l.setSpacing(6)
+    trent_calibration_intro_lbl = QLabel(
+        _tr_or(
+            "savegame_editor.trent_preview_calibration_intro",
+            "Adjust head and hand offsets/rotations live. Each change is written to a calibration log so the final values can be hardcoded later.",
+        ),
+        trent_calibration_box,
+    )
+    trent_calibration_intro_lbl.setWordWrap(True)
+    trent_calibration_intro_lbl.setStyleSheet("color: #9aa0a6;")
+    trent_calibration_l.addWidget(trent_calibration_intro_lbl)
+    trent_calibration_grid = QGridLayout()
+    trent_calibration_grid.setContentsMargins(0, 0, 0, 0)
+    trent_calibration_grid.setHorizontalSpacing(10)
+    trent_calibration_grid.setVerticalSpacing(4)
+    axis_specs = (
+        ("pos_x", "X", -200, 200, 100.0),
+        ("pos_y", "Y", -200, 200, 100.0),
+        ("pos_z", "Z", -200, 200, 100.0),
+        ("rot_x", "RX", -180, 180, 1.0),
+        ("rot_y", "RY", -180, 180, 1.0),
+        ("rot_z", "RZ", -180, 180, 1.0),
+    )
+    for col, (_axis_key, axis_label, _minv, _maxv, _scale) in enumerate(axis_specs, start=1):
+        hdr = QLabel(axis_label, trent_calibration_box)
+        hdr.setStyleSheet("font-weight: 600;")
+        hdr.setAlignment(Qt.AlignCenter)
+        trent_calibration_grid.addWidget(hdr, 0, col)
+    for row, (part_key, part_label) in enumerate((("head", "Head"), ("left", "Left Hand"), ("right", "Right Hand")), start=1):
+        row_label = QLabel(part_label, trent_calibration_box)
+        row_label.setStyleSheet("font-weight: 600;")
+        trent_calibration_grid.addWidget(row_label, row, 0)
+        trent_adjustment_controls[part_key] = {}
+        for col, (axis_key, _axis_label, minv, maxv, scale) in enumerate(axis_specs, start=1):
+            slider, value_lbl, slider_scale = _make_trent_adjustment_slider(
+                trent_calibration_box,
+                minimum=minv,
+                maximum=maxv,
+                scale=scale,
+            )
+            cell = QWidget(trent_calibration_box)
+            cell_l = QVBoxLayout(cell)
+            cell_l.setContentsMargins(0, 0, 0, 0)
+            cell_l.setSpacing(1)
+            cell_l.addWidget(slider)
+            cell_l.addWidget(value_lbl)
+            trent_calibration_grid.addWidget(cell, row, col)
+            trent_adjustment_controls[part_key][axis_key] = (slider, value_lbl, slider_scale)
+            trent_adjustment_widgets.extend([slider, value_lbl])
+    trent_calibration_l.addLayout(trent_calibration_grid)
+    trent_calibration_footer = QHBoxLayout()
+    trent_calibration_path_lbl = QLabel(str(trent_calibration_log_path), trent_calibration_box)
+    trent_calibration_path_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    trent_calibration_path_lbl.setStyleSheet("color: #9aa0a6;")
+    trent_calibration_reset_btn = QPushButton(_tr_or("savegame_editor.trent_preview_calibration_reset", "Reset Calibration"), trent_calibration_box)
+    trent_calibration_footer.addWidget(trent_calibration_path_lbl, 1)
+    trent_calibration_footer.addWidget(trent_calibration_reset_btn)
+    trent_calibration_l.addLayout(trent_calibration_footer)
+    trent_adjustment_widgets.extend([trent_calibration_box, trent_calibration_intro_lbl, trent_calibration_path_lbl, trent_calibration_reset_btn])
+    trent_l.addWidget(trent_calibration_box)
+    trent_calibration_box.setVisible(TRENT_PREVIEW_CALIBRATION_ENABLED)
+    trent_calibration_box.setEnabled(TRENT_PREVIEW_CALIBRATION_ENABLED)
+    trent_character_3d = FreelancerModelPreviewWidget(
+        _tr_or("savegame_editor.trent_preview_character", "Trent Character"),
+        dlg,
+    )
+    trent_character_3d.setMinimumHeight(520)
+    trent_l.addWidget(trent_character_3d, 1)
     trent_lock_lbl = QLabel("", dlg)
     trent_lock_lbl.setWordWrap(True)
     trent_lock_lbl.setVisible(False)
     trent_lock_lbl.setStyleSheet("color: #9aa0a6;")
     trent_l.addWidget(trent_lock_lbl)
-    trent_l.addStretch(1)
 
     ship_box = QGroupBox(tr("savegame_editor.ship_group"), dlg)
     ship_l = QVBoxLayout(ship_box)
@@ -2844,6 +2979,69 @@ def open_savegame_editor(self):
         "baseline_signature": None,
     }
     map_state: dict[str, object] = {"locked_ids": set(), "visit_ids": set()}
+    trent_model_paths_by_nick: dict[str, str] = {}
+
+    def _trent_preview_adjustments_from_ui() -> dict[str, dict[str, tuple[float, float, float]]]:
+        result: dict[str, dict[str, tuple[float, float, float]]] = {}
+        for part_key in ("head", "left", "right"):
+            controls = trent_adjustment_controls.get(part_key, {})
+            pos_x = (controls.get("pos_x") or (None, None, 100.0))[0]
+            pos_y = (controls.get("pos_y") or (None, None, 100.0))[0]
+            pos_z = (controls.get("pos_z") or (None, None, 100.0))[0]
+            rot_x = (controls.get("rot_x") or (None, None, 1.0))[0]
+            rot_y = (controls.get("rot_y") or (None, None, 1.0))[0]
+            rot_z = (controls.get("rot_z") or (None, None, 1.0))[0]
+            result[part_key] = {
+                "offset": (
+                    (float(pos_x.value()) / 100.0) if isinstance(pos_x, QSlider) else 0.0,
+                    (float(pos_y.value()) / 100.0) if isinstance(pos_y, QSlider) else 0.0,
+                    (float(pos_z.value()) / 100.0) if isinstance(pos_z, QSlider) else 0.0,
+                ),
+                "rotation": (
+                    float(rot_x.value()) if isinstance(rot_x, QSlider) else 0.0,
+                    float(rot_y.value()) if isinstance(rot_y, QSlider) else 0.0,
+                    float(rot_z.value()) if isinstance(rot_z, QSlider) else 0.0,
+                ),
+            }
+        return result
+
+    def _update_trent_adjustment_labels() -> None:
+        for controls in trent_adjustment_controls.values():
+            for slider, value_lbl, scale in controls.values():
+                value_lbl.setText(f"{float(slider.value()) / float(scale):.2f}")
+
+    def _write_trent_preview_calibration_log() -> None:
+        if not TRENT_PREVIEW_CALIBRATION_ENABLED:
+            return
+        payload = {
+            "body": _combo_item_nick(body_cb),
+            "head": _combo_item_nick(head_cb),
+            "lefthand": _combo_item_nick(lh_cb),
+            "righthand": _combo_item_nick(rh_cb),
+            "adjustments": _trent_preview_adjustments_from_ui(),
+        }
+        line = json.dumps(payload, ensure_ascii=True)
+        try:
+            with trent_calibration_log_path.open("a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+        except Exception:
+            pass
+
+    def _reset_trent_adjustments() -> None:
+        for controls in trent_adjustment_controls.values():
+            for slider, _value_lbl, _scale in controls.values():
+                slider.blockSignals(True)
+                slider.setValue(0)
+                slider.blockSignals(False)
+        _update_trent_adjustment_labels()
+
+    def _on_trent_adjustment_changed() -> None:
+        if not TRENT_PREVIEW_CALIBRATION_ENABLED:
+            return
+        _update_trent_adjustment_labels()
+        trent_character_3d.set_preview_adjustments(_trent_preview_adjustments_from_ui())
+        _write_trent_preview_calibration_log()
+        _refresh_trent_preview()
 
     def _filter_tokens(text: str) -> list[str]:
         raw = str(text or "").strip().lower()
@@ -2897,6 +3095,88 @@ def open_savegame_editor(self):
         _refresh_cargo_table_filter()
         _refresh_houses_table_filter()
 
+    def _refresh_trent_preview() -> None:
+        def _combo_preview_text(cb: QComboBox) -> str:
+            return str(cb.currentText() or "").strip() or (_item_ui_label(_combo_item_nick(cb)) or "")
+
+        def _combo_model_path(cb: QComboBox) -> Path | None:
+            nick = _combo_item_nick(cb)
+            if not nick:
+                return None
+            path_txt = str(trent_model_paths_by_nick.get(nick.lower(), "") or "").strip()
+            if not path_txt:
+                return None
+            try:
+                return Path(path_txt)
+            except Exception:
+                return None
+
+        parts = {
+            "body": _combo_preview_text(body_cb),
+            "head": _combo_preview_text(head_cb),
+            "lefthand": _combo_preview_text(lh_cb),
+            "righthand": _combo_preview_text(rh_cb),
+        }
+        selected_count = sum(1 for value in parts.values() if value)
+        if TRENT_PREVIEW_CALIBRATION_ENABLED:
+            trent_character_3d.set_preview_adjustments(_trent_preview_adjustments_from_ui())
+        else:
+            trent_character_3d.set_preview_adjustments(None)
+        if trent_3d_bridge_available():
+            trent_3d_status_lbl.setText(
+                _tr_or(
+                    "savegame_editor.trent_preview_3d_status_ready",
+                    "Live 3D preview active. The selected body, head and hands are assembled into one combined character view.",
+                )
+                + " "
+                + _tr_or(
+                    "savegame_editor.trent_preview_selection_count",
+                    "Selected parts: {count}/4.",
+                ).format(count=selected_count)
+            )
+            selected_labels = [
+                label
+                for label in [
+                    _combo_preview_text(body_cb),
+                    _combo_preview_text(head_cb),
+                    _combo_preview_text(lh_cb),
+                    _combo_preview_text(rh_cb),
+                ]
+                if label
+            ]
+            trent_character_3d.set_model_paths(
+                [
+                    _combo_model_path(body_cb),
+                    _combo_model_path(head_cb),
+                    _combo_model_path(lh_cb),
+                    _combo_model_path(rh_cb),
+                ],
+                caption=_tr_or("savegame_editor.trent_preview_character", "Trent Character"),
+                meta=(
+                    _tr_or(
+                        "savegame_editor.trent_preview_character_meta",
+                        "Active parts: {parts}",
+                    ).format(parts=", ".join(selected_labels))
+                    if selected_labels
+                    else _tr_or(
+                        "savegame_editor.trent_preview_character_empty",
+                        "Choose body, head and hands to assemble the character.",
+                    )
+                ),
+            )
+        else:
+            trent_3d_status_lbl.setText(
+                _tr_or(
+                    "savegame_editor.trent_preview_3d_status_fallback",
+                    "3D preview is currently unavailable on this setup.",
+                )
+                + " "
+                + _tr_or(
+                    "savegame_editor.trent_preview_selection_count",
+                    "Selected parts: {count}/4.",
+                ).format(count=selected_count)
+            )
+
     def _clear_maps() -> None:
         visited_scene.clear()
         empty = QRectF(0, 0, 1, 1)
@@ -2922,6 +3202,7 @@ def open_savegame_editor(self):
         state["story_mission_name"] = ""
         rank_spin.setValue(0)
         money_spin.setValue(0)
+        _reset_trent_adjustments()
         description_edit.clear()
         rep_group_cb.setCurrentIndex(-1)
         rep_group_cb.setEditText("")
@@ -2931,6 +3212,7 @@ def open_savegame_editor(self):
         for cb in trent_item_cbs:
             cb.setCurrentIndex(-1)
             cb.setEditText("")
+        _refresh_trent_preview()
         ship_archetype_cb.setCurrentIndex(-1)
         ship_archetype_cb.setEditText("")
         for cb in core_component_cbs:
@@ -2988,6 +3270,7 @@ def open_savegame_editor(self):
             right_tabs,
             validate_btn,
             validate_help_lbl,
+            *trent_adjustment_widgets,
         ):
             w.setEnabled(False)
         act_file_reload.setEnabled(False)
@@ -3030,6 +3313,7 @@ def open_savegame_editor(self):
             right_tabs,
             validate_btn,
             validate_help_lbl,
+            *trent_adjustment_widgets,
         ):
             w.setEnabled(True)
         template_cb.setEnabled(bool(templates))
@@ -5363,6 +5647,7 @@ def open_savegame_editor(self):
             _set_item_combo_value(head_cb, _merged_trent_value(head, com_head))
             _set_item_combo_value(lh_cb, _merged_trent_value(lefthand, com_lefthand))
             _set_item_combo_value(rh_cb, _merged_trent_value(righthand, com_righthand))
+            _refresh_trent_preview()
             _set_item_combo_value(ship_archetype_cb, ship_archetype, add_missing=False)
             _set_item_combo_value(core_power_cb, core_components.get("power", ("", "1"))[0])
             core_power_cb.setProperty("fl_extra", str(core_components.get("power", ("", "1"))[1] or "1"))
@@ -5686,7 +5971,7 @@ def open_savegame_editor(self):
     def _load_game_data(target_game_path: str, *, reload_current_savegame: bool) -> bool:
         nonlocal game_path, faction_labels, templates, nickname_labels, numeric_id_map, costume_map
         nonlocal item_name_map, ship_nicks, equip_nicks, trent_nicks, trent_body_nicks
-        nonlocal trent_head_nicks, trent_lh_nicks, trent_rh_nicks, ship_hardpoints_by_nick
+        nonlocal trent_head_nicks, trent_lh_nicks, trent_rh_nicks, trent_model_paths_by_nick, ship_hardpoints_by_nick
         nonlocal ship_hp_types_by_hardpoint_by_nick
         nonlocal power_nicks, engine_nicks, scanner_nicks, tractor_nicks
         nonlocal cloak_nicks, cloak_mod_available, cloak_active
@@ -5729,6 +6014,9 @@ def open_savegame_editor(self):
         trent_head_nicks = list(item_data_new.get("trent_head_nicks", []) or [])
         trent_lh_nicks = list(item_data_new.get("trent_lh_nicks", []) or [])
         trent_rh_nicks = list(item_data_new.get("trent_rh_nicks", []) or [])
+        trent_model_paths_by_nick = {
+            str(k).lower(): str(v) for k, v in dict(item_data_new.get("trent_model_paths_by_nick", {}) or {}).items()
+        }
         ship_hardpoints_by_nick = {
             str(k): list(v) for k, v in dict(item_data_new.get("ship_hardpoints_by_nick", {}) or {}).items()
         }
@@ -6917,6 +7205,14 @@ def open_savegame_editor(self):
 
     ship_archetype_cb.currentIndexChanged.connect(lambda _idx: _on_ship_changed())
     ship_archetype_cb.currentTextChanged.connect(lambda _txt: _on_ship_changed())
+    for _trent_cb in trent_item_cbs:
+        _trent_cb.currentIndexChanged.connect(lambda _idx, cb=_trent_cb: _refresh_trent_preview())
+        _trent_cb.currentTextChanged.connect(lambda _txt, cb=_trent_cb: _refresh_trent_preview())
+    if TRENT_PREVIEW_CALIBRATION_ENABLED:
+        for _controls in trent_adjustment_controls.values():
+            for _slider, _value_lbl, _scale in _controls.values():
+                _slider.valueChanged.connect(lambda _value, s=_slider: _on_trent_adjustment_changed())
+        trent_calibration_reset_btn.clicked.connect(lambda: (_reset_trent_adjustments(), _on_trent_adjustment_changed()))
     system_cb.currentIndexChanged.connect(lambda _idx: (_rebuild_base_combo(_current_system_nick(), _current_base_nick()), _update_current_system_marker()))
     system_cb.currentTextChanged.connect(lambda _txt: (_rebuild_base_combo(_current_system_nick(), _current_base_nick()), _update_current_system_marker()))
     equip_add_btn.clicked.connect(lambda: _add_equip_row("", ""))
@@ -7114,6 +7410,8 @@ def open_savegame_editor(self):
         except Exception:
             pass
     visited_view.on_system_click = _select_system_from_map
+    _update_trent_adjustment_labels()
+    _refresh_trent_preview()
 
     _refresh_savegame_list(auto_load=False)
     _set_no_savegame_state()
