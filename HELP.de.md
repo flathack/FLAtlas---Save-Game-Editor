@@ -1,6 +1,6 @@
 # FLAtlas Savegame Editor — Hilfe
 
-**Version:** 0.2.0  
+**Version:** 0.5.0  
 **Entwickelt von:** Aldenmar Odin — flathack  
 **GitHub:** [github.com/flathack/FLAtlas---Save-Game-Editor](https://github.com/flathack/FLAtlas---Save-Game-Editor)  
 **Discord:** [discord.com/invite/RENtMMcc](https://discord.com/invite/RENtMMcc)

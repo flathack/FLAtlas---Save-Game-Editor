@@ -1,6 +1,6 @@
 # FLAtlas Savegame Editor — Wiki
 
-**Version:** 0.2.0  
+**Version:** 0.5.0  
 **Developed by:** Aldenmar Odin — flathack
 
 ---
