@@ -2278,7 +2278,9 @@ def open_savegame_editor(self):
     lay.setSpacing(8)
     menu_bar = QMenuBar(dlg)
     menu_bar.setNativeMenuBar(False)
-    lay.setMenuBar(menu_bar)
+    menu_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+    menu_bar.setMinimumHeight(max(30, menu_bar.sizeHint().height() + 4))
+    lay.addWidget(menu_bar, 0)
     file_menu = menu_bar.addMenu(tr("savegame_editor.menu.file"))
     edit_menu = menu_bar.addMenu(_tr_or("savegame_editor.menu.edit", "Edit"))
     view_menu = menu_bar.addMenu(_tr_or("savegame_editor.menu.view", "View"))
@@ -2327,17 +2329,40 @@ def open_savegame_editor(self):
     save_paths_initial = save_paths_cfg or default_dirs or ([default_dir] if str(default_dir).strip() else [])
     save_dir_edit = QLineEdit(self._savegame_dirs_to_text(save_paths_initial))
     game_path_edit = QLineEdit(game_path)
+    game_path_header_edit = QLineEdit(dlg)
+    game_path_header_edit.setReadOnly(True)
+    game_path_header_edit.setMinimumWidth(320)
+    game_path_header_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+    game_path_header_edit.setClearButtonEnabled(False)
+    game_path_header_edit.setPlaceholderText(_tr_or("savegame_editor.game_path_missing", "No Freelancer path selected"))
+
+    def _refresh_game_path_header() -> None:
+        current_game_path = str(game_path_edit.text() or "").strip()
+        game_path_header_edit.setText(current_game_path)
+        game_path_header_edit.setToolTip(current_game_path or _tr_or("savegame_editor.game_path_missing", "No Freelancer path selected"))
 
     savegame_cb = QComboBox(dlg)
     savegame_cb.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
     savegame_cb.setMinimumWidth(360)
+    game_path_host = QWidget(dlg)
+    game_path_l = QHBoxLayout(game_path_host)
+    game_path_l.setContentsMargins(0, 0, 0, 0)
+    game_path_l.setSpacing(6)
+    game_path_l.addWidget(QLabel(f"{tr('savegame_editor.game_path')}:", game_path_host))
+    game_path_l.addWidget(game_path_header_edit, 1)
     save_sel_host = QWidget(dlg)
     save_sel_l = QHBoxLayout(save_sel_host)
     save_sel_l.setContentsMargins(0, 0, 0, 0)
     save_sel_l.setSpacing(6)
     save_sel_l.addWidget(QLabel(tr("savegame_editor.select"), save_sel_host))
     save_sel_l.addWidget(savegame_cb, 1)
-    menu_bar.setCornerWidget(save_sel_host, Qt.TopRightCorner)
+    top_row = QHBoxLayout()
+    top_row.setContentsMargins(0, 0, 0, 0)
+    top_row.setSpacing(6)
+    top_row.addWidget(game_path_host, 1)
+    top_row.addWidget(save_sel_host, 0)
+    lay.addLayout(top_row)
+    _refresh_game_path_header()
 
     info_lbl = QLabel("")
     info_lbl.setWordWrap(True)
@@ -2586,21 +2611,13 @@ def open_savegame_editor(self):
     }
 
     trent_form = QFormLayout()
-    com_body_cb = QComboBox(dlg)
-    com_head_cb = QComboBox(dlg)
-    com_lh_cb = QComboBox(dlg)
-    com_rh_cb = QComboBox(dlg)
     body_cb = QComboBox(dlg)
     head_cb = QComboBox(dlg)
     lh_cb = QComboBox(dlg)
     rh_cb = QComboBox(dlg)
-    trent_item_cbs = [com_body_cb, com_head_cb, com_lh_cb, com_rh_cb, body_cb, head_cb, lh_cb, rh_cb]
+    trent_item_cbs = [body_cb, head_cb, lh_cb, rh_cb]
     for cb in trent_item_cbs:
         cb.setEditable(True)
-    trent_form.addRow(tr("savegame_editor.trent.com_body"), com_body_cb)
-    trent_form.addRow(tr("savegame_editor.trent.com_head"), com_head_cb)
-    trent_form.addRow(tr("savegame_editor.trent.com_lh"), com_lh_cb)
-    trent_form.addRow(tr("savegame_editor.trent.com_rh"), com_rh_cb)
     trent_form.addRow(tr("savegame_editor.trent.body"), body_cb)
     trent_form.addRow(tr("savegame_editor.trent.head"), head_cb)
     trent_form.addRow(tr("savegame_editor.trent.lh"), lh_cb)
@@ -2942,10 +2959,6 @@ def open_savegame_editor(self):
             rep_group_cb,
             system_cb,
             base_cb,
-            com_body_cb,
-            com_head_cb,
-            com_lh_cb,
-            com_rh_cb,
             body_cb,
             head_cb,
             lh_cb,
@@ -2988,10 +3001,6 @@ def open_savegame_editor(self):
             rep_group_cb,
             system_cb,
             base_cb,
-            com_body_cb,
-            com_head_cb,
-            com_lh_cb,
-            com_rh_cb,
             body_cb,
             head_cb,
             lh_cb,
@@ -3270,12 +3279,7 @@ def open_savegame_editor(self):
         if base_bad:
             issues.append(f"{tr('savegame_editor.base')}: {_current_base_nick()}")
 
-        _lock_item_combo(ship_archetype_cb, tr("savegame_editor.ship_archetype"))
         for cb, label in (
-            (com_body_cb, "Com Body"),
-            (com_head_cb, "Com Head"),
-            (com_lh_cb, "Com Left Hand"),
-            (com_rh_cb, "Com Right Hand"),
             (body_cb, "Body"),
             (head_cb, "Head"),
             (lh_cb, "Left Hand"),
@@ -3715,7 +3719,7 @@ def open_savegame_editor(self):
         for nick in nicks:
             cb.addItem(_item_ui_label(nick), nick)
 
-    def _set_item_combo_value(cb: QComboBox, nick: str) -> None:
+    def _set_item_combo_value(cb: QComboBox, nick: str, *, add_missing: bool = True) -> None:
         val = _resolve_item_nick(str(nick or "").strip())
         if not val:
             idx_empty = cb.findData("")
@@ -3730,6 +3734,10 @@ def open_savegame_editor(self):
             cb.setCurrentIndex(idx)
             if not str(cb.currentText() or "").strip():
                 cb.setEditText(_item_ui_label(val))
+            return
+        if not add_missing:
+            cb.setCurrentIndex(-1)
+            cb.setEditText(_item_ui_label(val))
             return
         cb.addItem(_item_ui_label(val), val)
         cb.setCurrentIndex(cb.count() - 1)
@@ -3770,6 +3778,12 @@ def open_savegame_editor(self):
 
     def _ship_hardpoints(ship_nick: str) -> list[str]:
         return list(ship_hardpoints_by_nick.get(str(ship_nick or "").strip().lower(), []))
+
+    def _is_ship_compatible(ship_nick: str) -> bool:
+        return bool(_ship_hardpoints(ship_nick))
+
+    def _compatible_ship_nicks() -> list[str]:
+        return [nick for nick in ship_nicks if _is_ship_compatible(nick)]
 
     def _equip_type(nick: str) -> str:
         return str(equip_type_by_nick.get(str(nick or "").strip().lower(), "") or "").strip().lower()
@@ -4203,7 +4217,7 @@ def open_savegame_editor(self):
         lock_ship_editor = (not expert_mode) and not (has_ship and has_hardpoints)
         for widget in ship_editor_controls:
             if widget is ship_archetype_cb:
-                widget.setEnabled(not lock_ship_editor and (not bool(widget.property("fl_compat_locked"))))
+                widget.setEnabled(True)
                 continue
             if widget in core_component_cbs or widget is core_cloak_cb:
                 widget.setEnabled(not lock_ship_editor and (not bool(widget.property("fl_compat_locked"))))
@@ -4222,25 +4236,21 @@ def open_savegame_editor(self):
         else:
             _refresh_hardpoint_hint()
 
-    _setup_item_combo(ship_archetype_cb, ship_nicks)
+    _setup_item_combo(ship_archetype_cb, _compatible_ship_nicks())
     _setup_item_combo(core_power_cb, power_nicks)
     _setup_item_combo(core_engine_cb, engine_nicks)
     _setup_item_combo(core_scanner_cb, scanner_nicks)
     _setup_item_combo(core_tractor_cb, tractor_nicks)
     _setup_item_combo(core_cloak_cb, cloak_nicks)
-    _setup_item_combo(com_body_cb, trent_body_nicks or trent_nicks or equip_nicks)
     _setup_item_combo(body_cb, trent_body_nicks or trent_nicks or equip_nicks)
-    _setup_item_combo(com_head_cb, trent_head_nicks or trent_nicks or equip_nicks)
     _setup_item_combo(head_cb, trent_head_nicks or trent_nicks or equip_nicks)
-    _setup_item_combo(com_lh_cb, trent_lh_nicks or trent_nicks or equip_nicks)
     _setup_item_combo(lh_cb, trent_lh_nicks or trent_nicks or equip_nicks)
-    _setup_item_combo(com_rh_cb, trent_rh_nicks or trent_nicks or equip_nicks)
     _setup_item_combo(rh_cb, trent_rh_nicks or trent_nicks or equip_nicks)
 
     def _update_rep_color(spin: QDoubleSpinBox, value: float) -> None:
-        if value < -0.61:
+        if value <= -0.60:
             spin.setStyleSheet("color: #d33f49; font-weight: 700;")
-        elif value > 0.61:
+        elif value >= 0.60:
             spin.setStyleSheet("color: #2f9e44; font-weight: 700;")
         else:
             spin.setStyleSheet("")
@@ -4981,10 +4991,6 @@ def open_savegame_editor(self):
 
     def _current_editor_signature() -> dict[str, object]:
         trent_vals = {
-            "com_body": _combo_item_nick(com_body_cb),
-            "com_head": _combo_item_nick(com_head_cb),
-            "com_lh": _combo_item_nick(com_lh_cb),
-            "com_rh": _combo_item_nick(com_rh_cb),
             "body": _combo_item_nick(body_cb),
             "head": _combo_item_nick(head_cb),
             "lh": _combo_item_nick(lh_cb),
@@ -5333,6 +5339,10 @@ def open_savegame_editor(self):
                 com_head = str(row.get("head", "") or "").strip()
                 com_lefthand = str(row.get("lefthand", "") or "").strip()
                 com_righthand = str(row.get("righthand", "") or "").strip()
+
+            def _merged_trent_value(primary: str, secondary: str) -> str:
+                return str(primary or "").strip() or str(secondary or "").strip()
+
             for core_key in ("power", "engine", "scanner", "tractor"):
                 cur_item, cur_extra = core_components.get(core_key, ("", "1"))
                 if cur_item:
@@ -5349,15 +5359,11 @@ def open_savegame_editor(self):
             money_spin.setValue(max(money_spin.minimum(), min(money_spin.maximum(), money)))
             description_edit.setText(_decode_savegame_player_name(description))
             _set_rep_group_value(rep_group)
-            _set_item_combo_value(com_body_cb, com_body)
-            _set_item_combo_value(com_head_cb, com_head)
-            _set_item_combo_value(com_lh_cb, com_lefthand)
-            _set_item_combo_value(com_rh_cb, com_righthand)
-            _set_item_combo_value(body_cb, body)
-            _set_item_combo_value(head_cb, head)
-            _set_item_combo_value(lh_cb, lefthand)
-            _set_item_combo_value(rh_cb, righthand)
-            _set_item_combo_value(ship_archetype_cb, ship_archetype)
+            _set_item_combo_value(body_cb, _merged_trent_value(body, com_body))
+            _set_item_combo_value(head_cb, _merged_trent_value(head, com_head))
+            _set_item_combo_value(lh_cb, _merged_trent_value(lefthand, com_lefthand))
+            _set_item_combo_value(rh_cb, _merged_trent_value(righthand, com_righthand))
+            _set_item_combo_value(ship_archetype_cb, ship_archetype, add_missing=False)
             _set_item_combo_value(core_power_cb, core_components.get("power", ("", "1"))[0])
             core_power_cb.setProperty("fl_extra", str(core_components.get("power", ("", "1"))[1] or "1"))
             _set_item_combo_value(core_engine_cb, core_components.get("engine", ("", "1"))[0])
@@ -5793,7 +5799,7 @@ def open_savegame_editor(self):
         _rebuild_base_combo(_current_system_nick(), _current_base_nick())
         ship_archetype_cb.blockSignals(True)
         ship_archetype_cb.clear()
-        _setup_item_combo(ship_archetype_cb, ship_nicks)
+        _setup_item_combo(ship_archetype_cb, _compatible_ship_nicks())
         ship_archetype_cb.blockSignals(False)
         core_current = [_combo_item_nick(cb) for cb in core_component_cbs]
         core_sources: list[tuple[QComboBox, list[str]]] = [
@@ -5822,10 +5828,6 @@ def open_savegame_editor(self):
         _refresh_cloak_visibility()
         trent_current = [_combo_item_nick(cb) for cb in trent_item_cbs]
         trent_sources: list[tuple[QComboBox, list[str]]] = [
-            (com_body_cb, trent_body_nicks or trent_nicks or equip_nicks),
-            (com_head_cb, trent_head_nicks or trent_nicks or equip_nicks),
-            (com_lh_cb, trent_lh_nicks or trent_nicks or equip_nicks),
-            (com_rh_cb, trent_rh_nicks or trent_nicks or equip_nicks),
             (body_cb, trent_body_nicks or trent_nicks or equip_nicks),
             (head_cb, trent_head_nicks or trent_nicks or equip_nicks),
             (lh_cb, trent_lh_nicks or trent_nicks or equip_nicks),
@@ -5901,6 +5903,7 @@ def open_savegame_editor(self):
             game_path = ""
             game_data_loaded_key = ""
             game_path_edit.setText("")
+            _refresh_game_path_header()
             QMessageBox.warning(
                 dlg,
                 tr("savegame_editor.title"),
@@ -5910,6 +5913,7 @@ def open_savegame_editor(self):
         gp_path = self._canonical_game_dir_from_input(raw_gp)
         game_path = str(gp_path).strip()
         game_path_edit.setText(game_path)
+        _refresh_game_path_header()
         if not game_path or self._find_freelancer_exe(gp_path) is None:
             QMessageBox.warning(
                 dlg,
@@ -6401,16 +6405,16 @@ def open_savegame_editor(self):
                 player = _preserve_or_drop_trent_key(player, trent_key)
         else:
             player, _ = self._set_single_key_line_in_section(
-                player, "com_body", f"com_body = {_saved_single_item_token('com_body', com_body_cb)}"
+                player, "com_body", f"com_body = {_saved_single_item_token('com_body', body_cb)}"
             )
             player, _ = self._set_single_key_line_in_section(
-                player, "com_head", f"com_head = {_saved_single_item_token('com_head', com_head_cb)}"
+                player, "com_head", f"com_head = {_saved_single_item_token('com_head', head_cb)}"
             )
             player, _ = self._set_single_key_line_in_section(
-                player, "com_lefthand", f"com_lefthand = {_saved_single_item_token('com_lefthand', com_lh_cb)}"
+                player, "com_lefthand", f"com_lefthand = {_saved_single_item_token('com_lefthand', lh_cb)}"
             )
             player, _ = self._set_single_key_line_in_section(
-                player, "com_righthand", f"com_righthand = {_saved_single_item_token('com_righthand', com_rh_cb)}"
+                player, "com_righthand", f"com_righthand = {_saved_single_item_token('com_righthand', rh_cb)}"
             )
             player, _ = self._set_single_key_line_in_section(
                 player, "body", f"body = {_saved_single_item_token('body', body_cb)}"
@@ -6425,7 +6429,7 @@ def open_savegame_editor(self):
                 player, "righthand", f"righthand = {_saved_single_item_token('righthand', rh_cb)}"
             )
         current_ship_nick = _combo_item_nick(ship_archetype_cb)
-        ship_token = str(original_player_values.get("ship_archetype", "") or "").strip() if bool(ship_archetype_cb.property("fl_compat_locked")) else _item_token_for_save(current_ship_nick)
+        ship_token = _item_token_for_save(current_ship_nick)
         player, _ = self._set_single_key_line_in_section(player, "ship_archetype", f"ship_archetype = {ship_token}")
 
         missing_core: list[str] = []
