@@ -124,6 +124,8 @@ def main() -> int:
         app_name,
         "--hidden-import",
         "pefile",
+        "--hidden-import",
+        "PySide6.Qt3DExtras",
         "--windowed",
     ]
     pyinstaller_cmd.extend(_build_data_args(sep))

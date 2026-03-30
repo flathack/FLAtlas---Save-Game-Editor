@@ -35,6 +35,7 @@ for module_name in BRIDGE_MODULE_FILES:
 
 hiddenimports = [
     "pefile",
+    "PySide6.Qt3DExtras",
 ]
 
 a = Analysis(

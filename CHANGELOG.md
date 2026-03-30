@@ -2,6 +2,15 @@
 
 All notable changes to FLAtlas Savegame Editor are documented in this file.
 
+## v0.5.1 - 2026-03-30
+
+### Improvements
+- Updated the Windows release package for v0.5.1.
+
+### Bug Fixes
+- Fixed packaged Trent 3D preview startup failures caused by a missing `PySide6.Qt3DExtras` runtime dependency.
+- Fixed `FLAtlas bridge offline` in the standalone Windows build when opening the Trent Character preview.
+
 ## v0.5.0 - 2026-03-29
 
 ### New Features
