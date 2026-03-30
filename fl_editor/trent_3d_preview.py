@@ -15,7 +15,6 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 _BRIDGE_PACKAGE = "_flatlas3d_bridge"
-_BRIDGE_SOURCE_DIR = Path(__file__).resolve().parents[2] / "FLAtlas" / "fl_editor"
 _BRIDGE_MODULES = (
     "freelancer_mesh_data",
     "cmp_orientation_debug",
@@ -48,11 +47,42 @@ _DEFAULT_PREVIEW_ADJUSTMENTS = {
 }
 
 
+def _bridge_candidate_dirs() -> list[Path]:
+    candidates: list[Path] = []
+    module_dir = Path(__file__).resolve().parent
+    candidates.append(module_dir / "_flatlas_bridge" / "fl_editor")
+    meipass = getattr(sys, "_MEIPASS", "")
+    if meipass:
+        candidates.append(Path(str(meipass)) / "_flatlas_bridge" / "fl_editor")
+    candidates.append(Path(__file__).resolve().parents[2] / "FLAtlas" / "fl_editor")
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(candidate)
+    return unique
+
+
+def _resolve_bridge_source_dir() -> Path | None:
+    for candidate in _bridge_candidate_dirs():
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def _ensure_bridge_package() -> None:
+    bridge_source_dir = _resolve_bridge_source_dir()
+    if bridge_source_dir is None:
+        return
     if _BRIDGE_PACKAGE in sys.modules:
+        pkg = sys.modules[_BRIDGE_PACKAGE]
+        pkg.__path__ = [str(bridge_source_dir)]
         return
     pkg = types.ModuleType(_BRIDGE_PACKAGE)
-    pkg.__path__ = [str(_BRIDGE_SOURCE_DIR)]
+    pkg.__path__ = [str(bridge_source_dir)]
     sys.modules[_BRIDGE_PACKAGE] = pkg
 
 
@@ -60,8 +90,10 @@ def _ensure_bridge_loaded() -> bool:
     global _BRIDGE_READY, _BRIDGE_ERROR
     if _BRIDGE_READY:
         return True
-    if not _BRIDGE_SOURCE_DIR.exists():
-        _BRIDGE_ERROR = f"FLAtlas source not found: {_BRIDGE_SOURCE_DIR}"
+    bridge_source_dir = _resolve_bridge_source_dir()
+    if bridge_source_dir is None:
+        candidate_text = ", ".join(str(path) for path in _bridge_candidate_dirs())
+        _BRIDGE_ERROR = f"FLAtlas bridge source not found. Checked: {candidate_text}"
         return False
     try:
         _ensure_bridge_package()

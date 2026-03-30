@@ -14,6 +14,19 @@ ENTRYPOINT = PROJECT_ROOT / "start_savegame_editor.py"
 UPDATER_SCRIPT = PROJECT_ROOT / "fleditor_updater.py"
 ICON_FILE = PROJECT_ROOT / "fl_editor" / "images" / "icon.png"
 ICON_ICO_FILE = PROJECT_ROOT / "fl_editor" / "images" / "icon.ico"
+BRIDGE_SOURCE_ROOT = PROJECT_ROOT.parent / "FLAtlas" / "fl_editor"
+BRIDGE_MODULE_FILES = (
+    "freelancer_mesh_data.py",
+    "cmp_orientation_debug.py",
+    "qt3d_compat.py",
+    "native_preview_style.py",
+    "cmp_loader.py",
+    "mat_texture_loader.py",
+    "native_preview_materials.py",
+    "native_preview_geometry.py",
+    "native_preview_scene_data.py",
+    "native_preview_qt3d.py",
+)
 
 
 def _detect_version() -> str:
@@ -43,6 +56,11 @@ def _build_data_args(sep: str) -> list[str]:
     for path in data_files:
         target = "fl_editor" if path.name == "translations.json" else "fl_editor/images"
         args.extend(["--add-data", f"{path}{sep}{target}"])
+    for module_name in BRIDGE_MODULE_FILES:
+        module_path = BRIDGE_SOURCE_ROOT / module_name
+        if not module_path.exists():
+            raise FileNotFoundError(f"Required FLAtlas bridge module not found: {module_path}")
+        args.extend(["--add-data", f"{module_path}{sep}_flatlas_bridge/fl_editor"])
     return args
 
 

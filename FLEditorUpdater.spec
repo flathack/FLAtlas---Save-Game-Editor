@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['C:\\Users\\STAdmin\\FLAtlas\\FLAtlass-Savegame-Editor\\FLAtlas---Save-Game-Editor\\fleditor_updater.py'],
+    ['C:\\Users\\steve\\Github\\FLAtlas---Save-Game-Editor\\fleditor_updater.py'],
     pathex=[],
     binaries=[],
     datas=[],
@@ -35,5 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['C:\\Users\\STAdmin\\FLAtlas\\FLAtlass-Savegame-Editor\\FLAtlas---Save-Game-Editor\\fl_editor\\images\\icon.ico'],
+    icon=['C:\\Users\\steve\\Github\\FLAtlas---Save-Game-Editor\\fl_editor\\images\\icon.ico'],
 )
