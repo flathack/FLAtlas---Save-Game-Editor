@@ -6,7 +6,11 @@ __pycache__/
 .DS_Store
 .venv/
 build/
+build-x64/
+build-arm64/
 dist/
+dist-x64/
+dist-arm64/
 
 FLAtlas-Savegame-Editor-*.spec
 release/
