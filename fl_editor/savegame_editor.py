@@ -6,6 +6,7 @@ This module can be used from MainWindow integration and can also be started stan
 from __future__ import annotations
 
 import os
+import platform
 import re
 import shutil
 import ssl
@@ -365,18 +366,206 @@ def _is_packaged_windows_release() -> bool:
     return getattr(sys, "frozen", False) and sys.platform == "win32"
 
 
-def _select_release_asset(assets: list[dict[str, str]]) -> dict[str, str] | None:
-    """Pick the best asset from a GitHub release for Windows self-update."""
-    zips_win = [a for a in assets if a["name"].lower().endswith(".zip") and re.search(r"win|windows", a["name"], re.I)]
-    if zips_win:
-        return zips_win[0]
-    zips_any = [a for a in assets if a["name"].lower().endswith(".zip")]
-    if zips_any:
-        return zips_any[0]
-    exes = [a for a in assets if a["name"].lower().endswith(".exe") and re.search(r"setup|install|win", a["name"], re.I)]
-    if exes:
-        return exes[0]
-    return None
+def _current_release_target() -> tuple[str, str]:
+    if sys.platform.startswith("win"):
+        os_name = "windows"
+    elif sys.platform.startswith("linux"):
+        os_name = "linux"
+    elif sys.platform == "darwin":
+        os_name = "macos"
+    else:
+        os_name = re.sub(r"[^a-z0-9]+", "", sys.platform.lower()) or "unknown"
+
+    machine = platform.machine().lower()
+    if machine in {"amd64", "x86_64"}:
+        arch = "x64"
+    elif machine in {"arm64", "aarch64"}:
+        arch = "arm64"
+    elif machine.startswith("arm"):
+        arch = "arm"
+    elif machine in {"x86", "i386", "i686"}:
+        arch = "x86"
+    else:
+        arch = re.sub(r"[^a-z0-9]+", "", machine) or "unknown"
+    return os_name, arch
+
+
+def _release_asset_tags(name: str) -> tuple[set[str], set[str]]:
+    n = str(name or "").lower()
+    os_tags: set[str] = set()
+    arch_tags: set[str] = set()
+
+    def _has(token_pattern: str) -> bool:
+        return bool(re.search(rf"(^|[^a-z0-9])({token_pattern})([^a-z0-9]|$)", n, re.I))
+
+    if _has(r"windows|win64|win32|win"):
+        os_tags.add("windows")
+    if n.endswith((".exe", ".msi")):
+        os_tags.add("windows")
+    if _has(r"linux|appimage|deb|rpm"):
+        os_tags.add("linux")
+    if _has(r"macos|darwin|osx|dmg"):
+        os_tags.add("macos")
+
+    if _has(r"x64|x86_64|amd64|win64"):
+        arch_tags.add("x64")
+    if _has(r"arm64|aarch64"):
+        arch_tags.add("arm64")
+    if _has(r"armv7|armv6|armhf|arm32|arm"):
+        arch_tags.add("arm")
+    if _has(r"i386|i686|win32") or bool(re.search(r"(^|[^a-z0-9])x86(?![_-]?64)([^a-z0-9]|$)", n, re.I)):
+        arch_tags.add("x86")
+    return os_tags, arch_tags
+
+
+def _release_asset_score(asset: dict[str, str], target_os: str, target_arch: str) -> int | None:
+    name = str(asset.get("name", "") or "")
+    url = str(asset.get("browser_download_url", "") or "")
+    if not name.strip() or not url.strip():
+        return None
+
+    lower_name = name.lower()
+    os_tags, arch_tags = _release_asset_tags(name)
+    if os_tags and target_os not in os_tags:
+        return None
+    if arch_tags and target_arch not in arch_tags:
+        return None
+
+    score = 0
+    score += 120 if target_os in os_tags else 20
+    score += 100 if target_arch in arch_tags else 10
+
+    if target_os == "windows":
+        if lower_name.endswith(".zip"):
+            score += 30
+        elif lower_name.endswith((".exe", ".msi")):
+            score += 20
+    elif target_os == "linux":
+        if "appimage" in lower_name:
+            score += 35
+        elif lower_name.endswith((".tar.gz", ".tar.xz", ".tgz", ".zip")):
+            score += 25
+        elif lower_name.endswith((".deb", ".rpm")):
+            score += 15
+    elif target_os == "macos":
+        if lower_name.endswith(".dmg"):
+            score += 30
+        elif lower_name.endswith((".zip", ".tar.gz")):
+            score += 20
+    return score
+
+
+def _select_release_asset(
+    assets: list[dict[str, str]],
+    *,
+    target_os: str | None = None,
+    target_arch: str | None = None,
+) -> dict[str, str] | None:
+    """Pick the best release asset for the current OS and CPU architecture."""
+    current_os, current_arch = _current_release_target()
+    target_os = target_os or current_os
+    target_arch = target_arch or current_arch
+    scored: list[tuple[int, int, dict[str, str]]] = []
+    for idx, asset in enumerate(assets):
+        score = _release_asset_score(asset, target_os, target_arch)
+        if score is not None:
+            scored.append((score, -idx, asset))
+    if not scored:
+        return None
+    scored.sort(reverse=True)
+    return scored[0][2]
+
+
+def _default_update_download_dir() -> Path:
+    for candidate in (Path.home() / "Downloads", Path.home() / "Download"):
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+    return Path(tempfile.gettempdir())
+
+
+def _unique_download_path(directory: Path, asset_name: str) -> Path:
+    safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", str(asset_name or "update.bin")).strip(" ._")
+    if not safe_name:
+        safe_name = "update.bin"
+    dest = directory / safe_name
+    if not dest.exists():
+        return dest
+    stem = dest.stem
+    suffix = dest.suffix
+    for idx in range(2, 1000):
+        cand = directory / f"{stem}-{idx}{suffix}"
+        if not cand.exists():
+            return cand
+    return directory / f"{stem}-{int(time.time())}{suffix}"
+
+
+def _download_release_asset(parent: QWidget | None, info: dict[str, object]) -> Path | None:
+    assets = info.get("assets") or []
+    asset = _select_release_asset(assets)
+    if asset is None:
+        QMessageBox.warning(
+            parent,
+            _tr_or("savegame_editor.update.title", "Updates"),
+            _tr_or("savegame_editor.update.no_asset", "Kein passendes Update-Paket im Release gefunden.\nBitte lade das Update manuell von GitHub herunter."),
+        )
+        return None
+
+    dest_dir = _default_update_download_dir()
+    try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        dest_dir = Path(tempfile.gettempdir())
+    dest_path = _unique_download_path(dest_dir, asset["name"])
+
+    progress = QProgressDialog(
+        _tr_or("savegame_editor.update.download_progress", "Update wird heruntergeladen... {percent}%").format(percent=0),
+        "",
+        0,
+        100,
+        parent,
+    )
+    progress.setWindowTitle(_tr_or("savegame_editor.update.title", "Updates"))
+    progress.setCancelButton(None)
+    progress.setMinimumDuration(0)
+    progress.setAutoClose(True)
+    progress.show()
+    QApplication.processEvents()
+
+    def _update_progress(pct: int) -> None:
+        progress.setValue(pct)
+        progress.setLabelText(
+            _tr_or("savegame_editor.update.download_progress", "Update wird heruntergeladen... {percent}%").format(percent=pct)
+        )
+        QApplication.processEvents()
+
+    try:
+        _download_url_to_file(asset["browser_download_url"], dest_path, progress_cb=_update_progress)
+        progress.setValue(100)
+        QApplication.processEvents()
+    except Exception as exc:
+        progress.close()
+        QMessageBox.critical(
+            parent,
+            _tr_or("savegame_editor.update.title", "Updates"),
+            _tr_or("savegame_editor.update.download_failed", "Der Download des Updates ist fehlgeschlagen:\n{error}").format(error=exc),
+        )
+        try:
+            dest_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return None
+    progress.close()
+
+    target_os, target_arch = _current_release_target()
+    QMessageBox.information(
+        parent,
+        _tr_or("savegame_editor.update.title", "Updates"),
+        _tr_or(
+            "savegame_editor.update.download_complete",
+            "Update wurde heruntergeladen:\n{path}\n\nZielplattform: {platform}/{arch}",
+        ).format(path=dest_path, platform=target_os, arch=target_arch),
+    )
+    return dest_path
 
 
 def _download_url_to_file(url: str, dest: Path, *, progress_cb: object = None) -> None:
@@ -525,6 +714,7 @@ def _show_release_status_dialog(
     latest: dict[str, object] | None = None,
     show_open_button: bool = False,
     show_install_button: bool = False,
+    show_download_button: bool = False,
 ) -> None:
     dlg = QDialog(parent)
     dlg.setModal(True)
@@ -596,10 +786,16 @@ def _show_release_status_dialog(
         latest_label = _tr_or("savegame_editor.update.latest_label", "Latest")
         release_name_label = _tr_or("savegame_editor.update.release_name_label", "Release")
         release_type_label = _tr_or("savegame_editor.update.release_type_label", "Type")
+        target_label = _tr_or("savegame_editor.update.target_label", "Target")
+        asset_label = _tr_or("savegame_editor.update.asset_label", "Package")
+        target_os, target_arch = _current_release_target()
+        selected_asset = _select_release_asset(latest.get("assets") or [])
         details.append(f"<b>{installed_label}:</b> {SAVEGAME_EDITOR_VERSION}")
         details.append(f"<b>{latest_label}:</b> {str(latest.get('tag', '') or '-')}")
         details.append(f"<b>{release_name_label}:</b> {str(latest.get('name', '') or '-')}")
         details.append(f"<b>{release_type_label}:</b> {str(latest.get('type', '') or '-')}")
+        details.append(f"<b>{target_label}:</b> {target_os}/{target_arch}")
+        details.append(f"<b>{asset_label}:</b> {str(selected_asset.get('name') if selected_asset else '-')}")
         details_lbl = QLabel("<br>".join(details), dlg)
         details_lbl.setWordWrap(True)
         details_lbl.setTextFormat(Qt.RichText)
@@ -616,6 +812,10 @@ def _show_release_status_dialog(
     if show_install_button and isinstance(latest, dict):
         install_btn = QPushButton(_tr_or("savegame_editor.update.install", "Update installieren"), dlg)
         button_row.addWidget(install_btn)
+    download_btn = None
+    if show_download_button and isinstance(latest, dict):
+        download_btn = QPushButton(_tr_or("savegame_editor.update.download", "Update herunterladen"), dlg)
+        button_row.addWidget(download_btn)
     open_btn = None
     if show_open_button and isinstance(latest, dict) and str(latest.get("url", "")).strip():
         open_btn = QPushButton(_tr_or("savegame_editor.update.open", "Open Download"), dlg)
@@ -630,6 +830,12 @@ def _show_release_status_dialog(
             _start_frozen_windows_self_update(parent, latest)
 
         install_btn.clicked.connect(_install_update)
+    if download_btn is not None:
+        def _download_update() -> None:
+            dlg.accept()
+            _download_release_asset(parent, latest)
+
+        download_btn.clicked.connect(_download_update)
     if open_btn is not None:
         def _open_release() -> None:
             url = str(latest.get("url", "") or "").strip()
@@ -700,7 +906,8 @@ def _check_for_updates_popup(parent: QWidget | None = None, *, verbose: bool = F
                 latest=latest,
             )
         return
-    can_self_update = _is_packaged_windows_release() and _select_release_asset(latest.get("assets") or []) is not None
+    selected_asset = _select_release_asset(latest.get("assets") or [])
+    can_self_update = _is_packaged_windows_release() and selected_asset is not None
     _show_release_status_dialog(
         parent,
         title=_tr_or("savegame_editor.update.title.available", tr("savegame_editor.update.title")),
@@ -713,8 +920,9 @@ def _check_for_updates_popup(parent: QWidget | None = None, *, verbose: bool = F
         ).replace("\n", "<br>"),
         tone="info",
         latest=latest,
-        show_open_button=True,
+        show_open_button=selected_asset is None or not can_self_update,
         show_install_button=can_self_update,
+        show_download_button=selected_asset is not None and not can_self_update,
     )
 
 
@@ -745,7 +953,8 @@ def _check_for_updates_popup_async(parent: QWidget | None = None) -> None:
         latest_tag = str(latest.get("tag") or "").strip()
         if not latest_tag or _compare_version_tags(latest_tag, SAVEGAME_EDITOR_VERSION) <= 0:
             return
-        can_self_update = _is_packaged_windows_release() and _select_release_asset(latest.get("assets") or []) is not None
+        selected_asset = _select_release_asset(latest.get("assets") or [])
+        can_self_update = _is_packaged_windows_release() and selected_asset is not None
         _show_release_status_dialog(
             parent,
             title=_tr_or("savegame_editor.update.title.available", tr("savegame_editor.update.title")),
@@ -758,8 +967,9 @@ def _check_for_updates_popup_async(parent: QWidget | None = None) -> None:
             ).replace("\n", "<br>"),
             tone="info",
             latest=latest,
-            show_open_button=True,
+            show_open_button=selected_asset is None or not can_self_update,
             show_install_button=can_self_update,
+            show_download_button=selected_asset is not None and not can_self_update,
         )
 
     QTimer.singleShot(300, _poll)
