@@ -2,6 +2,25 @@
 
 All notable changes to FLAtlas Savegame Editor are documented in this file.
 
+## v0.6.0 - 2026-05-05
+
+### New Features
+- Added an architecture-aware auto-updater that selects the matching release asset for Windows, Linux, x64, ARM64, and ARM targets.
+- Added direct update downloads from the update dialog, while preserving the existing Windows self-update flow for packaged builds.
+- Added a green `Launch Freelancer` button next to Save that uses the configured game path.
+
+### Improvements
+- Optimized startup by delaying game data loading, savegame name resolving, update checks, and 3D preview initialization until after the first window is visible.
+- Made the 3D preview load on demand instead of automatically during savegame loading.
+- Added a Qt3D runtime safety probe before loading 3D previews to avoid native crashes on affected Python/Qt setups.
+- Kept the SWAT BlackOps theme as the default and refined compact editor UI behavior.
+
+### Bug Fixes
+- Fixed savegame loading crashes caused by automatic 3D preview initialization.
+- Fixed update asset selection so Linux and ARM builds are not confused with Windows x64 packages.
+- Fixed several 3D preview rendering issues around double-sided ship geometry and wireframe visibility.
+- Fixed universe map interaction and player position coloring.
+
 ## v0.5.2 - 2026-05-05
 
 ### Improvements

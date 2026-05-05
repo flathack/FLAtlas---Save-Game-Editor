@@ -2,7 +2,7 @@
 
 Editor fuer **Freelancer**-Singleplayer-Savegames (`*.fl`).
 
-Aktuelle Version: `v0.5.2`
+Aktuelle Version: `v0.6.0`
 
 ## Kann was?
 
