@@ -50,6 +50,10 @@ def _build_data_args(sep: str) -> list[str]:
         PROJECT_ROOT / "fl_editor" / "images" / "anubis_shield.png",
         PROJECT_ROOT / "fl_editor" / "images" / "icon.png",
         PROJECT_ROOT / "fl_editor" / "images" / "splash.png",
+        PROJECT_ROOT / "fl_editor" / "images" / "splash_light.png",
+        PROJECT_ROOT / "fl_editor" / "images" / "splash_dark.png",
+        PROJECT_ROOT / "fl_editor" / "images" / "splash_swat_blackops.png",
+        PROJECT_ROOT / "fl_editor" / "images" / "splash_freelancer.png",
     ]
     if ICON_ICO_FILE.exists():
         data_files.append(ICON_ICO_FILE)

@@ -23,8 +23,8 @@ import zipfile
 from urllib import request as urlrequest, error as urlerror
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QPointF, QRectF, QTimer, QObject, QEvent
-from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QIcon, QPixmap, QActionGroup
+from PySide6.QtCore import Qt, QPointF, QRectF, QTimer, QObject, QEvent, QSize, Signal
+from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QIcon, QPixmap, QActionGroup
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -81,6 +81,7 @@ THEME_ORDER = [
     "Light",
     "Dark",
     "SWAT BlackOps",
+    "Freelancer",
 ]
 DEFAULT_THEME_NAME = "SWAT BlackOps"
 THEME_ORDER_SET = {str(n) for n in THEME_ORDER}
@@ -224,6 +225,56 @@ QScrollBar:vertical { background: #151515; width: 10px; margin: 0; }
 QScrollBar::handle:vertical { background: #353535; border-radius: 5px; min-height: 28px; }
 QScrollBar::handle:vertical:hover { background: #ee3841; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+""",
+    "Freelancer": """
+QDialog { background-color: #030812; color: #bfefff; }
+QWidget { color: #8ed9f5; font-family: "Segoe UI"; font-size: 10pt; }
+QMenuBar, QMenu { background: #040a18; color: #bfefff; border: 1px solid #0b8fbd; }
+QMenuBar { border: 0; border-bottom: 1px solid #0b8fbd; padding: 2px 5px; }
+QMenuBar::item { background: transparent; border-radius: 3px; padding: 4px 8px; }
+QMenuBar::item:selected, QMenu::item:selected { background: #102a58; color: #ffffff; border: 1px solid #00d7ff; }
+QMenu::item { border-radius: 3px; padding: 6px 10px; }
+QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #bfefff; }
+QGroupBox { border: 2px solid #00aeea; border-radius: 4px; margin-top: 8px; padding: 7px 6px 6px 6px; background: #070d2b; }
+QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; color: #77dcff; font-weight: 700; background: #030812; }
+QPushButton { background: #101846; color: #d8f7ff; border: 2px solid #00bde8; border-radius: 4px; padding: 5px 10px; font-weight: 700; }
+QPushButton[variant="secondary"] { background: #0a1231; border: 1px solid #5aa8d6; color: #a8e7ff; }
+QPushButton:hover { background: #172464; border-color: #53e8ff; color: #ffffff; }
+QPushButton[variant="secondary"]:hover { background: #13204f; border-color: #53e8ff; color: #ffffff; }
+QPushButton:pressed { background: #06102d; border-color: #8ff3ff; }
+QPushButton:disabled { color: #4f7488; border-color: #1b4964; background: #081426; }
+QCheckBox { spacing: 7px; color: #a8e7ff; }
+QCheckBox::indicator { width: 15px; height: 15px; border-radius: 2px; border: 1px solid #00bde8; background: #08142d; }
+QCheckBox::indicator:hover { border-color: #53e8ff; }
+QCheckBox::indicator:checked { background: #00aeea; border-color: #8ff3ff; }
+QSlider::groove:horizontal { height: 6px; border-radius: 2px; background: #08142d; border: 1px solid #1b7da5; }
+QSlider::sub-page:horizontal { background: #00bde8; border-radius: 2px; }
+QSlider::handle:horizontal { width: 15px; height: 15px; margin: -6px 0; border-radius: 2px; background: #bfefff; border: 1px solid #00d7ff; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit { background: #07102a; color: #9ce7ff; border: 1px solid #1d87b4; border-radius: 3px; min-height: 23px; padding: 3px 6px; selection-background-color: #123c74; selection-color: #ffffff; }
+QComboBox { padding-right: 24px; }
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QTextEdit:focus { border-color: #00d7ff; background: #0d1740; color: #d8f7ff; }
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #4f7488; border-color: #173e58; background: #07101d; }
+QComboBox QAbstractItemView, QAbstractItemView { background: #07102a; color: #9ce7ff; border: 1px solid #00bde8; selection-background-color: #123c74; selection-color: #ffffff; }
+QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; border-left: 1px solid #1d87b4; width: 22px; }
+QComboBox::down-arrow { image: none; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid #8ff3ff; margin-right: 5px; }
+QTabWidget::pane { border: 2px solid #00aeea; border-radius: 4px; top: -1px; background: #070d2b; }
+QTabBar::tab { background: #0a1231; border: 1px solid #1b7da5; border-bottom: 0; border-top-left-radius: 4px; border-top-right-radius: 4px; padding: 5px 10px; margin-right: 2px; color: #7edfff; }
+QTabBar::tab:selected { background: #101846; color: #ffffff; border-color: #00d7ff; }
+QTableWidget { gridline-color: #2a79c7; background: #080d2b; alternate-background-color: #0d1439; border: 2px solid #00aeea; border-radius: 4px; selection-background-color: #173b79; selection-color: #ffffff; }
+QTableWidget#reputationTable { gridline-color: #7fdfff; background: #0a0d33; alternate-background-color: #101044; border: 2px solid #7fdfff; }
+QHeaderView::section { background: #101846; color: #8ff3ff; border: 0; border-right: 1px solid #2a79c7; border-bottom: 1px solid #2a79c7; padding: 4px; font-weight: 700; }
+QTableCornerButton::section { background: #101846; border: 1px solid #2a79c7; }
+QProgressBar { border: 1px solid #00aeea; border-radius: 3px; background: #07102a; color: #d8f7ff; text-align: center; }
+QProgressBar::chunk { background: #00bde8; border-radius: 2px; }
+QGraphicsView { background: #050b1d; border: 2px solid #00aeea; border-radius: 4px; }
+QSplitter::handle { background: #0b8fbd; }
+QScrollBar:vertical { background: #040a18; width: 12px; margin: 0; border-left: 1px solid #1b7da5; }
+QScrollBar::handle:vertical { background: #6fc7df; border: 1px solid #00d7ff; border-radius: 2px; min-height: 28px; }
+QScrollBar::handle:vertical:hover { background: #bfefff; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QScrollBar:horizontal { background: #040a18; height: 12px; margin: 0; border-top: 1px solid #1b7da5; }
+QScrollBar::handle:horizontal { background: #6fc7df; border: 1px solid #00d7ff; border-radius: 2px; min-width: 28px; }
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
 """,
 }
 # Keep typography stable across style states (hover/pressed/selected),
@@ -985,6 +1036,23 @@ def _close_startup_splash(app: QApplication | None = None) -> None:
         inst.setProperty("flatlas_savegame_splash", None)
 
 
+def _splash_path_for_theme(theme_name: str) -> Path:
+    images_dir = Path(__file__).with_name("images")
+    normalized = str(theme_name or "").strip().lower()
+    filename_by_theme = {
+        "light": "splash_light.png",
+        "dark": "splash_dark.png",
+        "swat blackops": "splash_swat_blackops.png",
+        "freelancer": "splash_freelancer.png",
+    }
+    for filename in (filename_by_theme.get(normalized, ""), "splash.png"):
+        if filename:
+            path = images_dir / filename
+            if path.exists():
+                return path
+    return images_dir / "splash.png"
+
+
 class _DialogCloseEventGuard(QObject):
     def __init__(self, owner: QDialog, on_close_request):
         super().__init__(owner)
@@ -1054,6 +1122,128 @@ class _SavegameKnownMapView(QGraphicsView):
                     event.accept()
                     return
         super().mousePressEvent(event)
+
+
+class _FreelancerReputationSlider(QWidget):
+    """Segmented Freelancer-style reputation control with a QSlider-like API."""
+
+    valueChanged = Signal(int)
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._minimum = -100
+        self._maximum = 100
+        self._value = 0
+        self._segments = 21
+        self._dragging = False
+        self.setMinimumHeight(34)
+        self.setMinimumWidth(210)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(210, 34)
+
+    def sizeHint(self) -> QSize:
+        return QSize(260, 34)
+
+    def setRange(self, minimum: int, maximum: int) -> None:
+        self._minimum = int(minimum)
+        self._maximum = max(int(maximum), self._minimum + 1)
+        self.setValue(self._value)
+
+    def setSingleStep(self, _step: int) -> None:
+        return
+
+    def setPageStep(self, _step: int) -> None:
+        return
+
+    def value(self) -> int:
+        return int(self._value)
+
+    def setValue(self, value: int) -> None:
+        new_value = max(self._minimum, min(self._maximum, int(value)))
+        if new_value == self._value:
+            return
+        self._value = new_value
+        self.update()
+        self.valueChanged.emit(int(self._value))
+
+    def _value_from_x(self, x: float) -> int:
+        rect = self.rect().adjusted(10, 9, -10, -9)
+        if rect.width() <= 0:
+            return self._minimum
+        frac = max(0.0, min(1.0, (float(x) - float(rect.left())) / float(rect.width())))
+        raw = self._minimum + frac * (self._maximum - self._minimum)
+        return int(round(raw / 10.0) * 10)
+
+    def _set_from_pos(self, x: float) -> None:
+        self.setValue(self._value_from_x(x))
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self._dragging = True
+            self._set_from_pos(event.position().x() if hasattr(event, "position") else event.pos().x())
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._dragging:
+            self._set_from_pos(event.position().x() if hasattr(event, "position") else event.pos().x())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton and self._dragging:
+            self._dragging = False
+            self._set_from_pos(event.position().x() if hasattr(event, "position") else event.pos().x())
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        rect = self.rect().adjusted(10, 9, -10, -9)
+        if rect.width() <= 0 or rect.height() <= 0:
+            return
+        segment_gap = 3.0
+        segment_w = (float(rect.width()) - segment_gap * float(self._segments - 1)) / float(self._segments)
+        segment_h = min(18.0, float(rect.height()))
+        y = float(rect.center().y()) - segment_h / 2.0
+        active = int(round((self._value - self._minimum) / (self._maximum - self._minimum) * (self._segments - 1)))
+        center = self._segments // 2
+        border_pen = QPen(QColor("#1b7da5"), 1.0)
+        border_pen.setCosmetic(True)
+        empty_brush = QBrush(QColor(8, 15, 48, 78))
+        for idx in range(self._segments):
+            x = float(rect.left()) + idx * (segment_w + segment_gap)
+            seg_rect = QRectF(x, y, segment_w, segment_h)
+            if active > center:
+                filled = center <= idx <= active
+            elif active < center:
+                filled = active <= idx <= center
+            else:
+                filled = idx == center
+            if not filled:
+                painter.setPen(border_pen)
+                painter.setBrush(empty_brush)
+                painter.drawRect(seg_rect)
+                continue
+            distance = abs(idx - center)
+            if idx < center:
+                color = QColor("#ff4a4a") if distance > 5 else QColor("#ff9a9a")
+            elif idx > center:
+                color = QColor("#55ff42") if distance > 5 else QColor("#adff9c")
+            else:
+                color = QColor("#ffffff")
+            if distance <= 2:
+                color = QColor("#ffffff")
+            painter.setPen(QPen(QColor("#79dfff"), 0.8))
+            painter.setBrush(QBrush(color))
+            painter.drawRect(seg_rect)
 
 
 class _SavegameEditorHost(QMainWindow):
@@ -2936,6 +3126,23 @@ def open_savegame_editor(self):
                 "text_current": QColor("#ffe58a"),
                 "text_empty": QColor("#777777"),
             }
+        if t == "Freelancer":
+            return {
+                "bg": QColor("#030812"),
+                "line_inactive": QColor("#315779"),
+                "line_locked": QColor("#8b4f6e"),
+                "line_visited": QColor("#2a79c7"),
+                "node_inactive": QColor("#5f8ca6"),
+                "node_locked": QColor("#aa5f84"),
+                "node_visited": QColor("#00bde8"),
+                "node_current": QColor("#ffd447"),
+                "node_outline": QColor("#00d7ff"),
+                "text_inactive": QColor("#6fc7df"),
+                "text_locked": QColor("#d9a7c0"),
+                "text_visited": QColor("#bfefff"),
+                "text_current": QColor("#ffe58a"),
+                "text_empty": QColor("#4f7488"),
+            }
         return {
             "bg": QColor("#0f141d"),
             "line_inactive": QColor("#8a8a8a"),
@@ -3330,6 +3537,7 @@ def open_savegame_editor(self):
     houses_filter_edit.setPlaceholderText(_tr_or("savegame_editor.filter_houses", "Filter factions..."))
     rep_l.addWidget(houses_filter_edit)
     houses_tbl = QTableWidget(0, 3, dlg)
+    houses_tbl.setObjectName("reputationTable")
     houses_tbl.setHorizontalHeaderLabels(
         [tr("savegame_editor.col.faction"), tr("savegame_editor.col.rep"), tr("savegame_editor.col.slider")]
     )
@@ -5065,6 +5273,7 @@ def open_savegame_editor(self):
     def _insert_house_row(faction: str, rep: float, raw_line: str = "") -> None:
         row = houses_tbl.rowCount()
         houses_tbl.insertRow(row)
+        houses_tbl.setRowHeight(row, 44)
         faction_nick = str(faction or "").strip()
         faction_label = faction_labels.get(
             faction_nick.lower(),
@@ -5085,7 +5294,7 @@ def open_savegame_editor(self):
         _update_rep_color(rep_spin, float(rep))
         houses_tbl.setCellWidget(row, 1, rep_spin)
 
-        rep_slider = QSlider(Qt.Horizontal, dlg)
+        rep_slider = _FreelancerReputationSlider(dlg)
         rep_slider.setRange(-100, 100)
         rep_slider.setSingleStep(1)
         rep_slider.setPageStep(5)
@@ -5244,6 +5453,96 @@ def open_savegame_editor(self):
         for key, (x, y) in positions.items():
             node_pos[key] = QPointF((x - min_x) * scale, (y - min_y) * scale)
         visited_systems: set[str] = {k for k, hv in hash_by_sys.items() if hv in visit_ids}
+        freelancer_map = str(current_theme or "").strip() == "Freelancer"
+        map_bounds = QRectF()
+        if node_pos:
+            min_px = min(pt.x() for pt in node_pos.values())
+            max_px = max(pt.x() for pt in node_pos.values())
+            min_py = min(pt.y() for pt in node_pos.values())
+            max_py = max(pt.y() for pt in node_pos.values())
+            map_bounds = QRectF(min_px, min_py, max(1.0, max_px - min_px), max(1.0, max_py - min_py)).adjusted(-44, -44, 44, 44)
+
+        def _freelancer_color(hex_color: str, alpha: int) -> QColor:
+            c = QColor(hex_color)
+            c.setAlpha(max(0, min(255, int(alpha))))
+            return c
+
+        def _add_freelancer_map_background(bounds: QRectF) -> None:
+            if bounds.isNull() or bounds.width() <= 0 or bounds.height() <= 0:
+                return
+            bg = visited_scene.addRect(bounds, QPen(Qt.NoPen), QBrush(QColor("#030812")))
+            bg.setZValue(-100.0)
+
+            # Decorative nebula bands, placed like the Freelancer Sirius-sector map:
+            # pale Bretonia cloud left, blue Liberty core, green Kusari/Rheinland rim,
+            # and an orange center glow.
+            nebula_specs = (
+                (0.18, 0.42, 0.30, 0.82, "#9ec8ff", 44),
+                (0.47, 0.26, 0.30, 0.38, "#2f79ff", 58),
+                (0.79, 0.20, 0.42, 0.56, "#00f0a8", 48),
+                (0.78, 0.72, 0.46, 0.62, "#00d592", 42),
+                (0.52, 0.66, 0.32, 0.28, "#ff9c2a", 60),
+                (0.36, 0.52, 0.70, 0.86, "#314a88", 34),
+            )
+            for cx, cy, ww, hh, color, alpha in nebula_specs:
+                rect = QRectF(
+                    bounds.left() + bounds.width() * (cx - ww / 2.0),
+                    bounds.top() + bounds.height() * (cy - hh / 2.0),
+                    bounds.width() * ww,
+                    bounds.height() * hh,
+                )
+                item = visited_scene.addEllipse(rect, QPen(Qt.NoPen), QBrush(_freelancer_color(color, alpha)))
+                item.setZValue(-92.0)
+
+            fine_pen = QPen(_freelancer_color("#1b7da5", 42), 0.55)
+            fine_pen.setCosmetic(True)
+            strong_pen = QPen(_freelancer_color("#00bde8", 74), 0.9)
+            strong_pen.setCosmetic(True)
+            step = max(14.0, min(bounds.width(), bounds.height()) / 34.0)
+            start_x = bounds.left() - (bounds.left() % step)
+            start_y = bounds.top() - (bounds.top() % step)
+            idx = 0
+            x = start_x
+            while x <= bounds.right() + step:
+                line = visited_scene.addLine(x, bounds.top(), x, bounds.bottom(), strong_pen if idx % 5 == 0 else fine_pen)
+                line.setZValue(-80.0)
+                x += step
+                idx += 1
+            idx = 0
+            y = start_y
+            while y <= bounds.bottom() + step:
+                line = visited_scene.addLine(bounds.left(), y, bounds.right(), y, strong_pen if idx % 5 == 0 else fine_pen)
+                line.setZValue(-80.0)
+                y += step
+                idx += 1
+
+            dot_pen = QPen(_freelancer_color("#bfefff", 150), 1.0)
+            dot_pen.setCosmetic(True)
+            for i in range(150):
+                sx = bounds.left() + ((i * 37) % 997) / 997.0 * bounds.width()
+                sy = bounds.top() + ((i * 71) % 991) / 991.0 * bounds.height()
+                r = 0.75 + ((i * 13) % 5) * 0.22
+                star = visited_scene.addEllipse(sx - r, sy - r, r * 2.0, r * 2.0, dot_pen, QBrush(_freelancer_color("#d8f7ff", 110 + (i % 4) * 24)))
+                star.setZValue(-70.0)
+
+            label_font = QFont("Bahnschrift Condensed", 22)
+            label_font.setBold(True)
+            label_specs = (
+                ("BRETONIA", 0.00, 0.62),
+                ("LIBERTY", 0.40, 0.55),
+                ("KUSARI", 0.53, 0.23),
+                ("RHEINLAND", 0.68, 0.66),
+                ("SIRIUS-SEKTOR", 0.45, 0.96),
+            )
+            for text, fx, fy in label_specs:
+                label = visited_scene.addText(text, label_font)
+                label.setDefaultTextColor(_freelancer_color("#d8f7ff", 220))
+                label.setAcceptedMouseButtons(Qt.NoButton)
+                label.setZValue(-20.0)
+                label.setPos(bounds.left() + bounds.width() * fx, bounds.top() + bounds.height() * fy)
+
+        if freelancer_map:
+            _add_freelancer_map_background(map_bounds)
         for edge in edges:
             a = str(edge.get("a", "")).upper()
             b = str(edge.get("b", "")).upper()
@@ -5258,24 +5557,38 @@ def open_savegame_editor(self):
             if edge_visited:
                 visited_systems.add(a)
                 visited_systems.add(b)
-            pen = QPen(map_colors["line_visited"] if edge_visited else map_colors["line_inactive"], 2.0 if edge_visited else 1.2)
+            if freelancer_map:
+                glow_pen = QPen(_freelancer_color("#005ea8", 96 if edge_visited else 58), 5.2 if edge_visited else 3.6)
+                glow_pen.setCosmetic(True)
+                glow = visited_scene.addLine(node_pos[a].x(), node_pos[a].y(), node_pos[b].x(), node_pos[b].y(), glow_pen)
+                glow.setZValue(-8.0)
+            pen = QPen(map_colors["line_visited"] if edge_visited else map_colors["line_inactive"], 2.3 if (freelancer_map and edge_visited) else (1.5 if freelancer_map else (2.0 if edge_visited else 1.2)))
             pen.setCosmetic(True)
-            visited_scene.addLine(node_pos[a].x(), node_pos[a].y(), node_pos[b].x(), node_pos[b].y(), pen)
+            line = visited_scene.addLine(node_pos[a].x(), node_pos[a].y(), node_pos[b].x(), node_pos[b].y(), pen)
+            line.setZValue(-5.0 if freelancer_map else 0.0)
         for key, pt in node_pos.items():
             row = dict(systems_obj.get(key, {}) or {})
             disp = str(row.get("display", key) or key)
             is_visited = key in visited_systems
             is_current = bool(current_system) and key == current_system
-            r = 8.5 if is_current else (7.0 if is_visited else 5.0)
+            r = (7.2 if is_current else (5.6 if is_visited else 4.0)) if freelancer_map else (8.5 if is_current else (7.0 if is_visited else 5.0))
             fill = map_colors["node_current"] if is_current else (map_colors["node_visited"] if is_visited else map_colors["node_inactive"])
-            pen = QPen(map_colors["node_outline"], 1.0)
+            if freelancer_map:
+                glow_r = r * (2.6 if is_current else 2.1)
+                glow_fill = QColor(fill)
+                glow_fill.setAlpha(90 if is_current else (72 if is_visited else 46))
+                glow = visited_scene.addEllipse(pt.x() - glow_r, pt.y() - glow_r, glow_r * 2.0, glow_r * 2.0, QPen(Qt.NoPen), QBrush(glow_fill))
+                glow.setZValue(4.0)
+            pen = QPen(map_colors["node_outline"], 1.0 if not freelancer_map else 1.4)
             pen.setCosmetic(True)
             node = visited_scene.addEllipse(pt.x() - r, pt.y() - r, r * 2.0, r * 2.0, pen, QBrush(fill))
+            node.setZValue(10.0)
             node.setData(0, key)
-            label = visited_scene.addText(disp)
-            label.setDefaultTextColor(map_colors["text_current"] if is_current else (map_colors["text_visited"] if is_visited else map_colors["text_inactive"]))
-            label.setPos(pt.x() + 8.0, pt.y() - 10.0)
-            label.setAcceptedMouseButtons(Qt.NoButton)
+            if not freelancer_map:
+                label = visited_scene.addText(disp)
+                label.setDefaultTextColor(map_colors["text_current"] if is_current else (map_colors["text_visited"] if is_visited else map_colors["text_inactive"]))
+                label.setPos(pt.x() + 8.0, pt.y() - 10.0)
+                label.setAcceptedMouseButtons(Qt.NoButton)
         rect = visited_scene.itemsBoundingRect().adjusted(-24, -24, 24, 24)
         visited_scene.setSceneRect(rect)
         visited_view.set_base_rect(rect)
@@ -8006,7 +8319,11 @@ def run_standalone() -> int:
     icon_path = Path(__file__).with_name("images") / "icon.png"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
-    splash_path = Path(__file__).with_name("images") / "splash.png"
+    try:
+        splash_theme = str(Config().get("settings.theme", DEFAULT_THEME_NAME) or DEFAULT_THEME_NAME)
+    except Exception:
+        splash_theme = DEFAULT_THEME_NAME
+    splash_path = _splash_path_for_theme(splash_theme)
     if splash_path.exists():
         pix = QPixmap(str(splash_path))
         if not pix.isNull():
