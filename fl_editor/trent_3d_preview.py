@@ -280,16 +280,36 @@ def _double_sided_native_geometry(geometry):
     indices = tuple(int(index) for index in (getattr(geometry, "indices", ()) or ()))
     if len(indices) < 3:
         return geometry
+    positions = tuple(getattr(geometry, "positions", ()) or ())
+    if not positions:
+        return geometry
+    tex_coords = tuple(getattr(geometry, "tex_coords", ()) or ())
+    normals = tuple(getattr(geometry, "normals", ()) or ())
+    vertex_count = len(positions)
+    duplicate_offset = vertex_count
     doubled: list[int] = list(indices)
     for offset in range(0, len(indices) - 2, 3):
         a, b, c = indices[offset], indices[offset + 1], indices[offset + 2]
-        doubled.extend((a, c, b))
+        if a < 0 or b < 0 or c < 0 or a >= vertex_count or b >= vertex_count or c >= vertex_count:
+            continue
+        doubled.extend((a + duplicate_offset, c + duplicate_offset, b + duplicate_offset))
+    kwargs = {
+        "positions": positions + positions,
+        "indices": tuple(doubled),
+    }
+    if len(tex_coords) == vertex_count:
+        kwargs["tex_coords"] = tex_coords + tex_coords
+    if len(normals) == vertex_count:
+        kwargs["normals"] = normals + tuple((-nx, -ny, -nz) for nx, ny, nz in normals)
+    if hasattr(geometry, "index_size") and len(kwargs["positions"]) > 65535:
+        kwargs["index_size"] = 4
     try:
-        return replace(geometry, indices=tuple(doubled))
+        return replace(geometry, **kwargs)
     except Exception:
         try:
             clone = types.SimpleNamespace(**getattr(geometry, "__dict__", {}))
-            clone.indices = tuple(doubled)
+            for key, value in kwargs.items():
+                setattr(clone, key, value)
             return clone
         except Exception:
             return geometry
@@ -971,6 +991,12 @@ class FreelancerModelPreviewWidget(QWidget):
         self._cam_controller = None
         self._view3d = None
         self._container = None
+        self._orbit_center = None
+        self._orbit_distance = 120.0
+        self._orbit_yaw = 0.0
+        self._orbit_pitch = 0.0
+        self._orbit_dragging = False
+        self._orbit_last_pos: tuple[float, float] | None = None
         self._texture_refs: list[object] = []
         self._scene_entities: list[object] = []
         self._preview_bounds = None
@@ -995,8 +1021,8 @@ class FreelancerModelPreviewWidget(QWidget):
         self._card = QFrame(self)
         self._card.setObjectName("trentPreviewCard")
         self._card_layout = QVBoxLayout(self._card)
-        self._card_layout.setContentsMargins(10, 10, 10, 10)
-        self._card_layout.setSpacing(8)
+        self._card_layout.setContentsMargins(7, 7, 7, 7)
+        self._card_layout.setSpacing(5)
         layout.addWidget(self._card)
 
         self._eyebrow_label = QLabel(self._title.upper(), self._card)
@@ -1017,7 +1043,7 @@ class FreelancerModelPreviewWidget(QWidget):
         self._status_label.setObjectName("trentPreviewStatus")
         self._status_label.setWordWrap(True)
         self._status_label.setAlignment(Qt.AlignCenter)
-        self._status_label.setMinimumHeight(180)
+        self._status_label.setMinimumHeight(150)
         self._card_layout.addWidget(self._status_label, 1)
 
         self._hint_label = QLabel("Drag to orbit, wheel to zoom.", self._card)
@@ -1043,11 +1069,17 @@ class FreelancerModelPreviewWidget(QWidget):
 
         qt3d = sys.modules[f"{_BRIDGE_PACKAGE}.qt3d_compat"]
         self._view3d = qt3d.Qt3DWindow3D()
+        try:
+            self._view3d.installEventFilter(self)
+        except Exception:
+            pass
         self._container = QWidget.createWindowContainer(self._view3d, self)
         self._container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._container.setMinimumHeight(220)
+        self._container.setMinimumHeight(190)
         self._container.setFocusPolicy(Qt.StrongFocus)
         self._container.setObjectName("trentPreviewViewport")
+        self._container.setMouseTracking(True)
+        self._container.installEventFilter(self)
         self._card_layout.insertWidget(3, self._container, 1)
         self._status_label.hide()
         self._reset_btn.setVisible(True)
@@ -1070,11 +1102,6 @@ class FreelancerModelPreviewWidget(QWidget):
         self._camera.lens().setPerspectiveProjection(45.0, 16.0 / 9.0, 0.1, 50000.0)
         self._camera.setPosition(qt3d.QVector3D(0.0, 0.0, 120.0))
         self._camera.setViewCenter(qt3d.QVector3D(0.0, 0.0, 0.0))
-
-        self._cam_controller = qt3d.QOrbitCameraController3D(self._root)
-        self._cam_controller.setLinearSpeed(100.0)
-        self._cam_controller.setLookSpeed(180.0)
-        self._cam_controller.setCamera(self._camera)
         self._view3d.setRootEntity(self._root)
         self._apply_background_color()
         self._meta_label.setText("Ready for Freelancer model data")
@@ -1149,10 +1176,10 @@ class FreelancerModelPreviewWidget(QWidget):
         self._hint_label.setVisible(not compact_mode)
         if compact_mode:
             self._card_layout.setContentsMargins(0, 0, 0, 0)
-            self._card_layout.setSpacing(6)
+            self._card_layout.setSpacing(4)
         else:
-            self._card_layout.setContentsMargins(10, 10, 10, 10)
-            self._card_layout.setSpacing(8)
+            self._card_layout.setContentsMargins(7, 7, 7, 7)
+            self._card_layout.setSpacing(5)
         self._last_style_key = None
         self._apply_styles()
 
@@ -1250,46 +1277,51 @@ class FreelancerModelPreviewWidget(QWidget):
         try:
             qt3d = sys.modules[f"{_BRIDGE_PACKAGE}.qt3d_compat"]
             entity = qt3d.QEntity3D(self._root)
-            render_geometry = _double_sided_native_geometry(geometry) if self._force_flat_gray_material else geometry
+            render_geometry = _double_sided_native_geometry(geometry)
             renderer = qt3d_mod.build_native_geometry_renderer(render_geometry, owner=entity)
             if self._force_flat_gray_material:
                 light_mode = self._theme_is_light()
-                alpha_material_cls = getattr(qt3d, "QPhongAlphaMaterial3D", None)
-                if alpha_material_cls is not None:
-                    material = alpha_material_cls(entity)
-                    if hasattr(material, "setAlpha"):
-                        material.setAlpha(0.72)
-                    if light_mode:
-                        material.setAmbient(QColor(88, 88, 88))
-                        material.setDiffuse(QColor(122, 122, 122))
-                        material.setSpecular(QColor(28, 28, 28))
-                    else:
-                        material.setAmbient(QColor(132, 132, 132))
-                        material.setDiffuse(QColor(196, 196, 196))
-                        material.setSpecular(QColor(56, 56, 56))
+                material = qt3d.QPhongMaterial3D(entity)
+                if light_mode:
+                    material.setAmbient(QColor(88, 88, 88))
+                    material.setDiffuse(QColor(122, 122, 122))
+                    material.setSpecular(QColor(28, 28, 28))
                 else:
-                    material = qt3d.QPhongMaterial3D(entity)
-                    if light_mode:
-                        material.setAmbient(QColor(88, 88, 88, 184))
-                        material.setDiffuse(QColor(122, 122, 122, 184))
-                        material.setSpecular(QColor(28, 28, 28, 184))
-                    else:
-                        material.setAmbient(QColor(132, 132, 132, 184))
-                        material.setDiffuse(QColor(196, 196, 196, 184))
-                        material.setSpecular(QColor(56, 56, 56, 184))
+                    material.setAmbient(QColor(132, 132, 132))
+                    material.setDiffuse(QColor(196, 196, 196))
+                    material.setSpecular(QColor(56, 56, 56))
                 if hasattr(material, "setShininess"):
                     material.setShininess(8.0)
                 if hasattr(qt3d_mod, "_disable_backface_culling"):
                     qt3d_mod._disable_backface_culling(material)
             else:
-                material = qt3d_mod.build_native_geometry_material(
-                    owner=entity,
-                    native_geometry=geometry,
-                    texture_refs=self._texture_refs,
-                    texture_resolver=lambda native_geometry: scene_mod.texture_path_for_geometry(scene_data, native_geometry),
-                    allow_textures=True,
-                )
+                material = None
+                texture_path = scene_mod.texture_path_for_geometry(scene_data, geometry)
+                if texture_path is not None and hasattr(qt3d_mod, "build_qt3d_texture_material"):
+                    try:
+                        material = qt3d_mod.build_qt3d_texture_material(
+                            owner=entity,
+                            texture_path=texture_path,
+                            texture_refs=self._texture_refs,
+                            force_opaque=True,
+                        )
+                    except TypeError:
+                        material = qt3d_mod.build_qt3d_texture_material(
+                            owner=entity,
+                            texture_path=texture_path,
+                            texture_refs=self._texture_refs,
+                        )
+                if material is None:
+                    material = qt3d_mod.build_native_geometry_material(
+                        owner=entity,
+                        native_geometry=geometry,
+                        texture_refs=self._texture_refs,
+                        texture_resolver=lambda native_geometry: scene_mod.texture_path_for_geometry(scene_data, native_geometry),
+                        allow_textures=True,
+                    )
                 qt3d_mod.apply_native_geometry_material(material, geometry)
+                if hasattr(qt3d_mod, "_disable_backface_culling"):
+                    qt3d_mod._disable_backface_culling(material)
             transform = qt3d.QTransform3D(entity)
             entity.addComponent(renderer)
             entity.addComponent(material)
@@ -1332,14 +1364,25 @@ class FreelancerModelPreviewWidget(QWidget):
         try:
             qt3d = sys.modules[f"{_BRIDGE_PACKAGE}.qt3d_compat"]
             entity = qt3d.QEntity3D(self._root)
-            renderer = self._build_dfm_geometry_renderer(qt3d, geometry, owner=entity)
+            render_geometry = _double_sided_native_geometry(geometry)
+            renderer = self._build_dfm_geometry_renderer(qt3d, render_geometry, owner=entity)
             material = None
             if texture_path is not None and hasattr(qt3d_mod, "build_qt3d_texture_material"):
-                material = qt3d_mod.build_qt3d_texture_material(
-                    owner=entity,
-                    texture_path=texture_path,
-                    texture_refs=self._texture_refs,
-                )
+                try:
+                    material = qt3d_mod.build_qt3d_texture_material(
+                        owner=entity,
+                        texture_path=texture_path,
+                        texture_refs=self._texture_refs,
+                        force_opaque=True,
+                    )
+                except TypeError:
+                    material = qt3d_mod.build_qt3d_texture_material(
+                        owner=entity,
+                        texture_path=texture_path,
+                        texture_refs=self._texture_refs,
+                    )
+                if material is not None and hasattr(qt3d_mod, "_disable_backface_culling"):
+                    qt3d_mod._disable_backface_culling(material)
             if material is None:
                 material = qt3d.QPhongMaterial3D(entity)
                 diffuse = _material_color(geometry.material_name)
@@ -1446,13 +1489,88 @@ class FreelancerModelPreviewWidget(QWidget):
         self._status_label.setText(text)
         self._status_label.show()
 
+    def _event_position_xy(self, event) -> tuple[float, float]:
+        try:
+            pos = event.position()
+        except Exception:
+            pos = event.pos()
+        try:
+            return float(pos.x()), float(pos.y())
+        except Exception:
+            return (0.0, 0.0)
+
+    def eventFilter(self, watched, event) -> bool:
+        if watched in (self._container, self._view3d) and self._camera is not None:
+            etype = event.type()
+            if etype == QEvent.MouseButtonPress:
+                if event.button() == Qt.LeftButton:
+                    self._orbit_dragging = True
+                    self._orbit_last_pos = self._event_position_xy(event)
+                    try:
+                        self._container.setFocus(Qt.MouseFocusReason)
+                    except Exception:
+                        pass
+                return True
+            if etype == QEvent.MouseMove:
+                if self._orbit_dragging and self._orbit_last_pos is not None and (event.buttons() & Qt.LeftButton):
+                    x, y = self._event_position_xy(event)
+                    last_x, last_y = self._orbit_last_pos
+                    self._orbit_last_pos = (x, y)
+                    self._orbit_yaw -= (x - last_x) * 0.010
+                    self._orbit_pitch += (y - last_y) * 0.010
+                    self._orbit_pitch = max(math.radians(-82.0), min(math.radians(82.0), self._orbit_pitch))
+                    self._apply_orbit_camera()
+                return True
+            if etype == QEvent.MouseButtonRelease:
+                if event.button() == Qt.LeftButton:
+                    self._orbit_dragging = False
+                    self._orbit_last_pos = None
+                return True
+            if etype == QEvent.Wheel:
+                try:
+                    delta = float(event.angleDelta().y())
+                except Exception:
+                    delta = 0.0
+                if delta:
+                    factor = 0.88 if delta > 0 else 1.14
+                    self._orbit_distance = max(2.0, min(50000.0, self._orbit_distance * factor))
+                    self._apply_orbit_camera()
+                return True
+        return super().eventFilter(watched, event)
+
+    def _apply_orbit_camera(self) -> None:
+        if self._camera is None:
+            return
+        qt3d = sys.modules.get(f"{_BRIDGE_PACKAGE}.qt3d_compat")
+        if qt3d is None:
+            return
+        center = self._orbit_center
+        if center is None:
+            center = qt3d.QVector3D(0.0, 0.0, 0.0)
+            self._orbit_center = center
+        distance = max(2.0, float(self._orbit_distance or 2.0))
+        cos_pitch = math.cos(self._orbit_pitch)
+        x = math.sin(self._orbit_yaw) * cos_pitch * distance
+        y = math.sin(self._orbit_pitch) * distance
+        z = math.cos(self._orbit_yaw) * cos_pitch * distance
+        try:
+            self._camera.setUpVector(qt3d.QVector3D(0.0, 1.0, 0.0))
+        except Exception:
+            pass
+        self._camera.setViewCenter(center)
+        self._camera.setPosition(center + qt3d.QVector3D(x, y, z))
+
     def _reset_camera(self) -> None:
         if self._camera is None:
             return
         bounds = self._preview_bounds
         if bounds is None:
-            self._camera.setViewCenter(sys.modules[f"{_BRIDGE_PACKAGE}.qt3d_compat"].QVector3D(0.0, 0.0, 0.0))
-            self._camera.setPosition(sys.modules[f"{_BRIDGE_PACKAGE}.qt3d_compat"].QVector3D(0.0, 0.0, 120.0))
+            qt3d = sys.modules[f"{_BRIDGE_PACKAGE}.qt3d_compat"]
+            self._orbit_center = qt3d.QVector3D(0.0, 0.0, 0.0)
+            self._orbit_distance = 120.0
+            self._orbit_yaw = 0.0
+            self._orbit_pitch = 0.0
+            self._apply_orbit_camera()
             return
         qt3d = sys.modules[f"{_BRIDGE_PACKAGE}.qt3d_compat"]
         min_xyz = getattr(bounds, "min_xyz", (0.0, 0.0, 0.0))
@@ -1479,11 +1597,18 @@ class FreelancerModelPreviewWidget(QWidget):
             distance_height = (height * 0.44) / max(0.2, math_mod.tan(fov_rad * 0.5))
             distance_width = (width * 0.52) / max(0.2, aspect * math_mod.tan(fov_rad * 0.5))
             distance = max(distance_height, distance_width, depth * 1.8, radius * 1.18, 18.0)
-            self._camera.setViewCenter(focus)
-            self._camera.setPosition(qt3d.QVector3D(center.x(), focus.y(), float(min_xyz[2]) - distance))
+            self._orbit_center = focus
+            self._orbit_distance = distance
+            self._orbit_yaw = math.radians(180.0)
+            self._orbit_pitch = 0.0
         else:
-            self._camera.setViewCenter(center)
-            self._camera.setPosition(center + qt3d.QVector3D(radius * 1.05, radius * 0.7, radius * 2.45))
+            self._orbit_center = center
+            self._orbit_distance = max(18.0, math.sqrt((radius * 1.05) ** 2 + (radius * 0.7) ** 2 + (radius * 2.45) ** 2))
+            self._orbit_yaw = math.atan2(radius * 1.05, radius * 2.45)
+            self._orbit_pitch = math.asin((radius * 0.7) / self._orbit_distance)
+        self._orbit_dragging = False
+        self._orbit_last_pos = None
+        self._apply_orbit_camera()
 
     def _apply_background_color(self) -> None:
         if self._view3d is None:
@@ -1511,6 +1636,12 @@ class FreelancerModelPreviewWidget(QWidget):
         if self._style_update_in_progress:
             return
         dark_theme = not self._theme_is_light()
+        try:
+            accent = self.palette().highlight().color().name()
+            subtle_border = self.palette().mid().color().name()
+        except Exception:
+            accent = "#23b8d7" if dark_theme else "#2070cc"
+            subtle_border = "#3a4554" if dark_theme else "#d6d6d6"
         if self._force_flat_gray_material and self._compact_mode:
             card_bg = "transparent"
             border = "transparent"
@@ -1522,7 +1653,7 @@ class FreelancerModelPreviewWidget(QWidget):
         elif self._force_flat_gray_material:
             if dark_theme:
                 card_bg = "rgba(255, 255, 255, 0.04)"
-                border = "#3a4554"
+                border = subtle_border
                 title = "#eef1f5"
                 meta = "#9aa8b7"
                 hint = "#91a0af"
@@ -1545,7 +1676,7 @@ class FreelancerModelPreviewWidget(QWidget):
             viewport_border = "transparent"
         elif dark_theme:
             card_bg = "rgba(255, 255, 255, 0.04)"
-            border = "#3a4554"
+            border = accent
             title = "#eef1f5"
             meta = "#9aa8b7"
             hint = "#91a0af"
@@ -1593,7 +1724,7 @@ QLabel#trentPreviewStatus {{
     border: 1px solid {border};
     background: {status_bg};
     color: {meta};
-    padding: 14px;
+    padding: 10px;
 }}
 QWidget#trentPreviewViewport {{
     border: 1px solid {viewport_border};

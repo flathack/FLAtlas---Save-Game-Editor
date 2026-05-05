@@ -14,7 +14,7 @@ class Config:
         self._d: dict = {}
         if CONFIG_PATH.exists():
             try:
-                self._d = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+                self._d = json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
             except Exception:
                 pass
 

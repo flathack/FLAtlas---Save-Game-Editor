@@ -79,7 +79,9 @@ TRENT_PREVIEW_CALIBRATION_ENABLED = str(os.environ.get("FLATLAS_ENABLE_TRENT_PRE
 THEME_ORDER = [
     "Light",
     "Dark",
+    "SWAT BlackOps",
 ]
+DEFAULT_THEME_NAME = "SWAT BlackOps"
 THEME_ORDER_SET = {str(n) for n in THEME_ORDER}
 
 THEME_STYLES: dict[str, str] = {
@@ -87,14 +89,14 @@ THEME_STYLES: dict[str, str] = {
 QDialog { background-color: #f0f2f5; color: #1a1a2e; }
 QWidget { color: #1a1a2e; font-family: "Segoe UI"; font-size: 10pt; }
 QMenuBar, QMenu { background: #e0e4ea; color: #1a1a2e; border: 1px solid #c0c8d4; }
-QMenuBar { border: 0; border-bottom: 1px solid #c0c8d4; padding: 4px 6px; }
-QMenuBar::item { background: transparent; border-radius: 6px; padding: 6px 10px; }
+QMenuBar { border: 0; border-bottom: 1px solid #c0c8d4; padding: 2px 5px; }
+QMenuBar::item { background: transparent; border-radius: 5px; padding: 4px 8px; }
 QMenuBar::item:selected, QMenu::item:selected { background: #4a90d9; color: #ffffff; }
-QMenu::item { border-radius: 6px; padding: 8px 12px; }
+QMenu::item { border-radius: 5px; padding: 6px 10px; }
 QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #1a1a2e; }
-QGroupBox { border: 1px solid #c0c8d4; border-radius: 8px; margin-top: 10px; padding: 10px 8px 8px 8px; background: #ffffff; }
+QGroupBox { border: 1px solid #c0c8d4; border-radius: 7px; margin-top: 8px; padding: 7px 6px 6px 6px; background: #ffffff; }
 QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; color: #5a6070; font-weight: 700; }
-QPushButton { background: #2070cc; color: #ffffff; border: 1px solid #2070cc; border-radius: 6px; padding: 7px 11px; font-weight: 700; }
+QPushButton { background: #2070cc; color: #ffffff; border: 1px solid #2070cc; border-radius: 6px; padding: 5px 9px; font-weight: 700; }
 QPushButton[variant="secondary"] { background: #e4e8f0; border: 1px solid #b8c0d0; color: #3a4050; }
 QPushButton[variant="secondary"]:hover { background: #e8ecf0; border-color: #2070cc; }
 QPushButton:hover { background: #4a90d9; border-color: #2070cc; }
@@ -108,16 +110,18 @@ QCheckBox::indicator:checked { background: #4a90d9; border-color: #2070cc; }
 QSlider::groove:horizontal { height: 6px; border-radius: 3px; background: #e8ecf0; border: 1px solid #c0c8d4; }
 QSlider::sub-page:horizontal { background: #4a90d9; border-radius: 3px; }
 QSlider::handle:horizontal { width: 15px; height: 15px; margin: -6px 0; border-radius: 7px; background: #2060c0; border: 1px solid #ffffff; }
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit { background: #ffffff; color: #1a1a2e; border: 1px solid #c0c8d4; border-radius: 6px; min-height: 26px; padding: 5px 7px; selection-background-color: #4a90d9; selection-color: #ffffff; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit { background: #ffffff; color: #1a1a2e; border: 1px solid #c0c8d4; border-radius: 6px; min-height: 23px; padding: 3px 6px; selection-background-color: #4a90d9; selection-color: #ffffff; }
+QComboBox { padding-right: 24px; }
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QTextEdit:focus { border-color: #2070cc; background: #ffffff; }
 QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #8890a0; border-color: #c8ccd4; background: #e8ecf0; }
 QComboBox QAbstractItemView, QAbstractItemView { background: #ffffff; color: #1a1a2e; border: 1px solid #c0c8d4; selection-background-color: #4a90d9; selection-color: #ffffff; }
-QComboBox::drop-down { border: 0; width: 28px; }
+QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; border-left: 1px solid #c0c8d4; width: 22px; }
+QComboBox::down-arrow { image: none; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid #3a4050; margin-right: 5px; }
 QTabWidget::pane { border: 1px solid #c0c8d4; border-radius: 7px; top: -1px; background: #ffffff; }
-QTabBar::tab { background: #e4e8f0; border: 1px solid #c0c8d4; border-bottom: 0; border-top-left-radius: 8px; border-top-right-radius: 8px; padding: 7px 11px; margin-right: 3px; color: #3a4050; }
+QTabBar::tab { background: #e4e8f0; border: 1px solid #c0c8d4; border-bottom: 0; border-top-left-radius: 7px; border-top-right-radius: 7px; padding: 5px 9px; margin-right: 2px; color: #3a4050; }
 QTabBar::tab:selected { background: #ffffff; color: #1a1a2e; border-color: #2070cc; }
 QTableWidget { gridline-color: #c0c8d4; background: #ffffff; alternate-background-color: #e8ecf0; border: 1px solid #c0c8d4; border-radius: 6px; selection-background-color: #4a90d9; selection-color: #ffffff; }
-QHeaderView::section { background: #e8ecf0; color: #5a6070; border: 0; border-right: 1px solid #c0c8d4; border-bottom: 1px solid #c0c8d4; padding: 6px; font-weight: 700; }
+QHeaderView::section { background: #e8ecf0; color: #5a6070; border: 0; border-right: 1px solid #c0c8d4; border-bottom: 1px solid #c0c8d4; padding: 4px; font-weight: 700; }
 QTableCornerButton::section { background: #e8ecf0; border: 1px solid #c0c8d4; }
 QProgressBar { border: 1px solid #c0c8d4; border-radius: 4px; background: #ffffff; color: #1a1a2e; text-align: center; }
 QProgressBar::chunk { background: #4a90d9; border-radius: 4px; }
@@ -131,14 +135,14 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 QDialog { background-color: #08111f; color: #eaf3ff; }
 QWidget { color: #eaf3ff; font-family: "Segoe UI"; font-size: 10pt; }
 QMenuBar, QMenu { background: #0b1728; color: #eaf3ff; border: 1px solid #274364; }
-QMenuBar { border: 0; border-bottom: 1px solid #274364; padding: 4px 6px; }
-QMenuBar::item { background: transparent; border-radius: 6px; padding: 6px 10px; }
+QMenuBar { border: 0; border-bottom: 1px solid #274364; padding: 2px 5px; }
+QMenuBar::item { background: transparent; border-radius: 5px; padding: 4px 8px; }
 QMenuBar::item:selected, QMenu::item:selected { background: #0f8eb8; color: #f8fdff; }
-QMenu::item { border-radius: 6px; padding: 8px 12px; }
+QMenu::item { border-radius: 5px; padding: 6px 10px; }
 QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #eaf3ff; }
-QGroupBox { border: 1px solid #274364; border-radius: 8px; margin-top: 10px; padding: 10px 8px 8px 8px; background: #0e1a2e; }
+QGroupBox { border: 1px solid #274364; border-radius: 7px; margin-top: 8px; padding: 7px 6px 6px 6px; background: #0e1a2e; }
 QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; color: #9fb0ca; font-weight: 700; }
-QPushButton { background: #0f8eb8; color: #f7fbff; border: 1px solid #23b8d7; border-radius: 6px; padding: 7px 11px; font-weight: 700; }
+QPushButton { background: #0f8eb8; color: #f7fbff; border: 1px solid #23b8d7; border-radius: 6px; padding: 5px 9px; font-weight: 700; }
 QPushButton[variant="secondary"] { background: #111f34; border: 1px solid #31516f; color: #d8e9fb; }
 QPushButton[variant="secondary"]:hover { background: #182d4a; border-color: #23b8d7; }
 QPushButton:hover { background: #182d4a; border-color: #23b8d7; }
@@ -152,16 +156,18 @@ QCheckBox::indicator:checked { background: #0f8eb8; border-color: #23b8d7; }
 QSlider::groove:horizontal { height: 6px; border-radius: 3px; background: #0e1a2e; border: 1px solid #274364; }
 QSlider::sub-page:horizontal { background: #0f8eb8; border-radius: 3px; }
 QSlider::handle:horizontal { width: 15px; height: 15px; margin: -6px 0; border-radius: 7px; background: #66d9ff; border: 1px solid #f8fdff; }
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit { background: #0e1a2e; color: #eaf3ff; border: 1px solid #274364; border-radius: 6px; min-height: 26px; padding: 5px 7px; selection-background-color: #0f8eb8; selection-color: #f8fdff; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit { background: #0e1a2e; color: #eaf3ff; border: 1px solid #274364; border-radius: 6px; min-height: 23px; padding: 3px 6px; selection-background-color: #0f8eb8; selection-color: #f8fdff; }
+QComboBox { padding-right: 24px; }
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QTextEdit:focus { border-color: #23b8d7; background: #14233a; }
 QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #8492a7; border-color: #26354b; background: #111f34; }
 QComboBox QAbstractItemView, QAbstractItemView { background: #0e1a2e; color: #eaf3ff; border: 1px solid #274364; selection-background-color: #0f8eb8; selection-color: #f8fdff; }
-QComboBox::drop-down { border: 0; width: 28px; }
+QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; border-left: 1px solid #274364; width: 22px; }
+QComboBox::down-arrow { image: none; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid #d8e9fb; margin-right: 5px; }
 QTabWidget::pane { border: 1px solid #274364; border-radius: 7px; top: -1px; background: #0e1a2e; }
-QTabBar::tab { background: #111f34; border: 1px solid #274364; border-bottom: 0; border-top-left-radius: 8px; border-top-right-radius: 8px; padding: 7px 11px; margin-right: 3px; color: #d8e9fb; }
+QTabBar::tab { background: #111f34; border: 1px solid #274364; border-bottom: 0; border-top-left-radius: 7px; border-top-right-radius: 7px; padding: 5px 9px; margin-right: 2px; color: #d8e9fb; }
 QTabBar::tab:selected { background: #14233a; color: #eaf3ff; border-color: #23b8d7; }
 QTableWidget { gridline-color: #274364; background: #0e1a2e; alternate-background-color: #14233a; border: 1px solid #274364; border-radius: 6px; selection-background-color: #0f8eb8; selection-color: #f8fdff; }
-QHeaderView::section { background: #14233a; color: #9fb0ca; border: 0; border-right: 1px solid #274364; border-bottom: 1px solid #274364; padding: 6px; font-weight: 700; }
+QHeaderView::section { background: #14233a; color: #9fb0ca; border: 0; border-right: 1px solid #274364; border-bottom: 1px solid #274364; padding: 4px; font-weight: 700; }
 QTableCornerButton::section { background: #14233a; border: 1px solid #274364; }
 QProgressBar { border: 1px solid #274364; border-radius: 4px; background: #0e1a2e; color: #eaf3ff; text-align: center; }
 QProgressBar::chunk { background: #0f8eb8; border-radius: 4px; }
@@ -170,6 +176,52 @@ QSplitter::handle { background: #274364; }
 QScrollBar:vertical { background: #08111f; width: 10px; margin: 0; }
 QScrollBar::handle:vertical { background: #274364; border-radius: 5px; min-height: 28px; }
 QScrollBar::handle:vertical:hover { background: #23b8d7; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+""",
+    "SWAT BlackOps": """
+QDialog { background-color: #151515; color: #f5f5f5; }
+QWidget { color: #cccccc; font-family: "Segoe UI"; font-size: 10pt; }
+QMenuBar, QMenu { background: #151515; color: #f5f5f5; border: 1px solid #353535; }
+QMenuBar { border: 0; border-bottom: 1px solid #353535; padding: 2px 5px; }
+QMenuBar::item { background: transparent; border-radius: 5px; padding: 4px 8px; }
+QMenuBar::item:selected, QMenu::item:selected { background: #d62c00; color: #ffffff; }
+QMenu::item { border-radius: 5px; padding: 6px 10px; }
+QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #f5f5f5; }
+QGroupBox { border: 1px solid #353535; border-radius: 7px; margin-top: 8px; padding: 7px 6px 6px 6px; background: #212121; }
+QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; color: #999999; font-weight: 700; }
+QPushButton { background: #d62c00; color: #ffffff; border: 1px solid #ee3841; border-radius: 6px; padding: 5px 9px; font-weight: 700; }
+QPushButton[variant="secondary"] { background: #2b2b2b; border: 1px solid #585858; color: #cccccc; }
+QPushButton[variant="secondary"]:hover { background: #303030; border-color: #ee3841; color: #f5f5f5; }
+QPushButton:hover { background: #ee3841; border-color: #ee3841; }
+QPushButton:pressed { background: #aa2800; }
+QPushButton:disabled { color: #777777; border-color: #2b2b2b; background: #2b2b2b; }
+QCheckBox { spacing: 7px; color: #cccccc; }
+QCheckBox::indicator { width: 15px; height: 15px; border-radius: 4px; border: 1px solid #585858; background: #212121; }
+QCheckBox::indicator:hover { border-color: #ee3841; }
+QCheckBox::indicator:checked { background: #d62c00; border-color: #ee3841; }
+QSlider::groove:horizontal { height: 6px; border-radius: 3px; background: #212121; border: 1px solid #353535; }
+QSlider::sub-page:horizontal { background: #d62c00; border-radius: 3px; }
+QSlider::handle:horizontal { width: 15px; height: 15px; margin: -6px 0; border-radius: 7px; background: #ee3841; border: 1px solid #ffffff; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit { background: #212121; color: #cccccc; border: 1px solid #353535; border-radius: 6px; min-height: 23px; padding: 3px 6px; selection-background-color: #d62c00; selection-color: #ffffff; }
+QComboBox { padding-right: 24px; }
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QTextEdit:focus { border-color: #ee3841; background: #1e1e1e; }
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #777777; border-color: #2b2b2b; background: #1e1e1e; }
+QComboBox QAbstractItemView, QAbstractItemView { background: #212121; color: #cccccc; border: 1px solid #353535; selection-background-color: #d62c00; selection-color: #ffffff; }
+QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; border-left: 1px solid #353535; width: 22px; }
+QComboBox::down-arrow { image: none; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid #f5f5f5; margin-right: 5px; }
+QTabWidget::pane { border: 1px solid #353535; border-radius: 7px; top: -1px; background: #212121; }
+QTabBar::tab { background: #2b2b2b; border: 1px solid #353535; border-bottom: 0; border-top-left-radius: 7px; border-top-right-radius: 7px; padding: 5px 9px; margin-right: 2px; color: #cccccc; }
+QTabBar::tab:selected { background: #3a1a12; color: #ffffff; border-color: #ee3841; }
+QTableWidget { gridline-color: #353535; background: #212121; alternate-background-color: #1e1e1e; border: 1px solid #353535; border-radius: 6px; selection-background-color: #3a1a12; selection-color: #ffffff; }
+QHeaderView::section { background: #1e1e1e; color: #999999; border: 0; border-right: 1px solid #353535; border-bottom: 1px solid #353535; padding: 4px; font-weight: 700; }
+QTableCornerButton::section { background: #1e1e1e; border: 1px solid #353535; }
+QProgressBar { border: 1px solid #353535; border-radius: 4px; background: #212121; color: #f5f5f5; text-align: center; }
+QProgressBar::chunk { background: #d62c00; border-radius: 4px; }
+QGraphicsView { background: #212121; border: 1px solid #353535; border-radius: 7px; }
+QSplitter::handle { background: #353535; }
+QScrollBar:vertical { background: #151515; width: 10px; margin: 0; }
+QScrollBar::handle:vertical { background: #353535; border-radius: 5px; min-height: 28px; }
+QScrollBar::handle:vertical:hover { background: #ee3841; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 """,
 }
@@ -2355,14 +2407,14 @@ def open_savegame_editor(self):
         dlg.setWindowIcon(self.windowIcon())
     except Exception:
         pass
-    dlg.resize(1120, 800)
+    dlg.resize(1080, 740)
     lay = QVBoxLayout(dlg)
-    lay.setContentsMargins(10, 10, 10, 10)
-    lay.setSpacing(8)
+    lay.setContentsMargins(6, 6, 6, 6)
+    lay.setSpacing(5)
     menu_bar = QMenuBar(dlg)
     menu_bar.setNativeMenuBar(False)
     menu_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-    menu_bar.setMinimumHeight(max(30, menu_bar.sizeHint().height() + 4))
+    menu_bar.setMinimumHeight(max(26, menu_bar.sizeHint().height() + 2))
     lay.setMenuBar(menu_bar)
     file_menu = menu_bar.addMenu(tr("savegame_editor.menu.file"))
     edit_menu = menu_bar.addMenu(_tr_or("savegame_editor.menu.edit", "Edit"))
@@ -2496,13 +2548,13 @@ def open_savegame_editor(self):
 
     content_splitter = QSplitter(Qt.Horizontal, dlg)
     content_splitter.setChildrenCollapsible(False)
-    content_splitter.setHandleWidth(8)
+    content_splitter.setHandleWidth(6)
     sidebar = QWidget(dlg)
     sidebar.setMinimumWidth(250)
     sidebar.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
     sidebar_l = QVBoxLayout(sidebar)
     sidebar_l.setContentsMargins(0, 0, 0, 0)
-    sidebar_l.setSpacing(8)
+    sidebar_l.setSpacing(5)
     right_tabs = QTabWidget(dlg)
     tab_locked = QWidget(dlg)
     tab_visited = QWidget(dlg)
@@ -2511,17 +2563,17 @@ def open_savegame_editor(self):
     tab_ship = QWidget(dlg)
     tab_ship_view = QWidget(dlg)
     rep_l = QVBoxLayout(tab_reputation)
-    rep_l.setContentsMargins(8, 8, 8, 8)
-    rep_l.setSpacing(8)
+    rep_l.setContentsMargins(6, 6, 6, 6)
+    rep_l.setSpacing(5)
     trent_l = QVBoxLayout(tab_trent)
-    trent_l.setContentsMargins(8, 8, 8, 8)
-    trent_l.setSpacing(8)
+    trent_l.setContentsMargins(6, 6, 6, 6)
+    trent_l.setSpacing(5)
     ship_tab_l = QVBoxLayout(tab_ship)
-    ship_tab_l.setContentsMargins(8, 8, 8, 8)
-    ship_tab_l.setSpacing(8)
+    ship_tab_l.setContentsMargins(6, 6, 6, 6)
+    ship_tab_l.setSpacing(5)
     ship_view_l = QVBoxLayout(tab_ship_view)
-    ship_view_l.setContentsMargins(8, 8, 8, 8)
-    ship_view_l.setSpacing(8)
+    ship_view_l.setContentsMargins(6, 6, 6, 6)
+    ship_view_l.setSpacing(5)
     right_tabs.addTab(tab_visited, tr("savegame_editor.map_tab.visited"))
     right_tabs.addTab(tab_reputation, tr("savegame_editor.tab.reputation"))
     right_tabs.addTab(tab_trent, tr("savegame_editor.tab.trent"))
@@ -2546,7 +2598,7 @@ def open_savegame_editor(self):
     content_splitter.addWidget(right_tabs)
     content_splitter.setStretchFactor(0, 0)
     content_splitter.setStretchFactor(1, 1)
-    content_splitter.setSizes([300, 780])
+    content_splitter.setSizes([280, 800])
     lay.addWidget(content_splitter, 1)
 
     form = QFormLayout()
@@ -2595,9 +2647,9 @@ def open_savegame_editor(self):
         _tr_or("savegame_editor.sidebar_ship_preview", "Player Ship Preview"),
         dlg,
     )
-    sidebar_ship_preview.set_render_style(flat_gray_material=True, wireframe_overlay=True)
+    sidebar_ship_preview.set_render_style(flat_gray_material=True, wireframe_overlay=False)
     sidebar_ship_preview.set_compact_mode(True)
-    sidebar_ship_preview.setMinimumHeight(170)
+    sidebar_ship_preview.setMinimumHeight(140)
     sidebar_l.addWidget(sidebar_ship_preview)
     sidebar_l.addStretch(1)
 
@@ -2605,15 +2657,15 @@ def open_savegame_editor(self):
     locked_view = _SavegameKnownMapView(locked_scene, tab_locked)
     visited_map_l = QVBoxLayout(tab_visited)
     visited_map_l.setContentsMargins(0, 0, 0, 0)
-    visited_map_l.setSpacing(6)
+    visited_map_l.setSpacing(5)
     visited_scene = QGraphicsScene(tab_visited)
     visited_view = _SavegameKnownMapView(visited_scene, tab_visited)
     visited_view.setRenderHint(QPainter.Antialiasing, True)
-    visited_view.setMinimumHeight(240)
+    visited_view.setMinimumHeight(210)
     visited_view.setStyleSheet("QGraphicsView { border: 1px solid palette(mid); }")
     visited_map_l.addWidget(visited_view, 1)
     visited_legend = QLabel(
-        _tr_or("savegame_editor.legend.visited", "Gray: unknown  Green: visited  Red: current system"),
+        _tr_or("savegame_editor.legend.visited", "Gray: unknown  Green: visited  Yellow: current system"),
         tab_visited,
     )
     visited_legend.setStyleSheet("color: #9aa0a6;")
@@ -2649,13 +2701,30 @@ def open_savegame_editor(self):
                 "node_inactive": QColor("#8c99a8"),
                 "node_locked": QColor("#d64545"),
                 "node_visited": QColor("#2f9e44"),
-                "node_current": QColor("#d92d20"),
+                "node_current": QColor("#f5c542"),
                 "node_outline": QColor("#5f6b7a"),
                 "text_inactive": QColor("#425166"),
                 "text_locked": QColor("#7f1d1d"),
                 "text_visited": QColor("#1f2937"),
-                "text_current": QColor("#7a271a"),
+                "text_current": QColor("#6b4e00"),
                 "text_empty": QColor("#5b6778"),
+            }
+        if t == "SWAT BlackOps":
+            return {
+                "bg": QColor("#151515"),
+                "line_inactive": QColor("#777777"),
+                "line_locked": QColor("#aa2800"),
+                "line_visited": QColor("#d62c00"),
+                "node_inactive": QColor("#999999"),
+                "node_locked": QColor("#aa2800"),
+                "node_visited": QColor("#d62c00"),
+                "node_current": QColor("#ffd447"),
+                "node_outline": QColor("#353535"),
+                "text_inactive": QColor("#999999"),
+                "text_locked": QColor("#ffb0a3"),
+                "text_visited": QColor("#f5f5f5"),
+                "text_current": QColor("#ffe58a"),
+                "text_empty": QColor("#777777"),
             }
         return {
             "bg": QColor("#0f141d"),
@@ -2665,23 +2734,23 @@ def open_savegame_editor(self):
             "node_inactive": QColor("#9aa0a6"),
             "node_locked": QColor("#d33f49"),
             "node_visited": QColor("#2f9e44"),
-            "node_current": QColor("#ff5c5c"),
+            "node_current": QColor("#ffd447"),
             "node_outline": QColor("#202020"),
             "text_inactive": QColor("#a7a7a7"),
             "text_locked": QColor("#ffd5d8"),
             "text_visited": QColor("#d8d8d8"),
-            "text_current": QColor("#ffd0d0"),
+            "text_current": QColor("#ffe58a"),
             "text_empty": QColor("#a7a7a7"),
         }
 
-    map_colors: dict[str, QColor] = _map_colors_for_theme(self._cfg.get("settings.theme", "Dark"))
+    map_colors: dict[str, QColor] = _map_colors_for_theme(self._cfg.get("settings.theme", DEFAULT_THEME_NAME))
 
     def _apply_map_theme(theme_name: str) -> None:
         nonlocal map_colors
         map_colors = _map_colors_for_theme(theme_name)
         visited_scene.setBackgroundBrush(QBrush(map_colors["bg"]))
 
-    _apply_map_theme(self._cfg.get("settings.theme", "Dark"))
+    _apply_map_theme(self._cfg.get("settings.theme", DEFAULT_THEME_NAME))
 
     tpl_row = QHBoxLayout()
     tpl_row.addWidget(QLabel(tr("savegame_editor.template")))
@@ -2755,8 +2824,8 @@ def open_savegame_editor(self):
     trent_controls_row = QWidget(dlg)
     trent_controls_layout = QFormLayout(trent_controls_row)
     trent_controls_layout.setContentsMargins(0, 0, 0, 0)
-    trent_controls_layout.setHorizontalSpacing(10)
-    trent_controls_layout.setVerticalSpacing(6)
+    trent_controls_layout.setHorizontalSpacing(8)
+    trent_controls_layout.setVerticalSpacing(4)
     trent_controls_layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
     for label_text, cb in [
         (tr("savegame_editor.trent.body"), body_cb),
@@ -2770,11 +2839,11 @@ def open_savegame_editor(self):
     trent_main_row = QWidget(dlg)
     trent_main_layout = QHBoxLayout(trent_main_row)
     trent_main_layout.setContentsMargins(0, 0, 0, 0)
-    trent_main_layout.setSpacing(12)
+    trent_main_layout.setSpacing(8)
     trent_left_col = QWidget(trent_main_row)
     trent_left_layout = QVBoxLayout(trent_left_col)
     trent_left_layout.setContentsMargins(0, 0, 0, 0)
-    trent_left_layout.setSpacing(6)
+    trent_left_layout.setSpacing(5)
     trent_left_layout.addWidget(trent_controls_row)
     trent_right_col = QWidget(trent_main_row)
     trent_right_layout = QVBoxLayout(trent_right_col)
@@ -2792,8 +2861,8 @@ def open_savegame_editor(self):
     trent_adjustment_widgets: list[QWidget] = []
     trent_calibration_box = QGroupBox(_tr_or("savegame_editor.trent_preview_calibration_group", "Preview Calibration (Temporary)"), dlg)
     trent_calibration_l = QVBoxLayout(trent_calibration_box)
-    trent_calibration_l.setContentsMargins(8, 8, 8, 8)
-    trent_calibration_l.setSpacing(6)
+    trent_calibration_l.setContentsMargins(6, 6, 6, 6)
+    trent_calibration_l.setSpacing(5)
     trent_calibration_intro_lbl = QLabel(
         _tr_or(
             "savegame_editor.trent_preview_calibration_intro",
@@ -2806,7 +2875,7 @@ def open_savegame_editor(self):
     trent_calibration_l.addWidget(trent_calibration_intro_lbl)
     trent_calibration_grid = QGridLayout()
     trent_calibration_grid.setContentsMargins(0, 0, 0, 0)
-    trent_calibration_grid.setHorizontalSpacing(10)
+    trent_calibration_grid.setHorizontalSpacing(8)
     trent_calibration_grid.setVerticalSpacing(4)
     axis_specs = (
         ("pos_x", "X", -200, 200, 100.0),
@@ -2859,7 +2928,7 @@ def open_savegame_editor(self):
         _tr_or("savegame_editor.trent_preview_character", "Trent Character"),
         dlg,
     )
-    trent_character_3d.setMinimumHeight(320)
+    trent_character_3d.setMinimumHeight(280)
     trent_right_layout.addWidget(trent_character_3d, 1)
     trent_lock_lbl = QLabel("", dlg)
     trent_lock_lbl.setWordWrap(True)
@@ -2870,11 +2939,11 @@ def open_savegame_editor(self):
 
     ship_box = QGroupBox(tr("savegame_editor.ship_group"), dlg)
     ship_l = QVBoxLayout(ship_box)
-    ship_l.setContentsMargins(8, 8, 8, 8)
-    ship_l.setSpacing(6)
+    ship_l.setContentsMargins(6, 6, 6, 6)
+    ship_l.setSpacing(5)
     ship_form = QFormLayout()
     ship_archetype_cb = QComboBox(dlg)
-    ship_archetype_cb.setEditable(True)
+    ship_archetype_cb.setEditable(False)
     ship_form.addRow(tr("savegame_editor.ship_archetype"), ship_archetype_cb)
     ship_l.addLayout(ship_form)
 
@@ -2894,7 +2963,7 @@ def open_savegame_editor(self):
     ship_core_tab = QWidget(dlg)
     ship_core_l = QVBoxLayout(ship_core_tab)
     ship_core_l.setContentsMargins(0, 0, 0, 0)
-    ship_core_l.setSpacing(6)
+    ship_core_l.setSpacing(5)
     ship_core_form = QFormLayout()
     core_power_cb = QComboBox(dlg)
     core_engine_cb = QComboBox(dlg)
@@ -2926,7 +2995,7 @@ def open_savegame_editor(self):
     ship_equip_tab = QWidget(dlg)
     ship_equip_l = QVBoxLayout(ship_equip_tab)
     ship_equip_l.setContentsMargins(0, 0, 0, 0)
-    ship_equip_l.setSpacing(6)
+    ship_equip_l.setSpacing(5)
     equip_filter_edit = QLineEdit(dlg)
     equip_filter_edit.setClearButtonEnabled(True)
     equip_filter_edit.setPlaceholderText(_tr_or("savegame_editor.filter_equip", "Filter equipment..."))
@@ -2953,7 +3022,7 @@ def open_savegame_editor(self):
     ship_cargo_tab = QWidget(dlg)
     ship_cargo_l = QVBoxLayout(ship_cargo_tab)
     ship_cargo_l.setContentsMargins(0, 0, 0, 0)
-    ship_cargo_l.setSpacing(6)
+    ship_cargo_l.setSpacing(5)
     cargo_filter_edit = QLineEdit(dlg)
     cargo_filter_edit.setClearButtonEnabled(True)
     cargo_filter_edit.setPlaceholderText(_tr_or("savegame_editor.filter_cargo", "Filter cargo..."))
@@ -2961,7 +3030,7 @@ def open_savegame_editor(self):
     fixed_cargo_row = QWidget(dlg)
     fixed_cargo_l = QHBoxLayout(fixed_cargo_row)
     fixed_cargo_l.setContentsMargins(0, 0, 0, 0)
-    fixed_cargo_l.setSpacing(8)
+    fixed_cargo_l.setSpacing(5)
     fixed_battery_lbl = QLabel("ShieldBattery (ge_s_battery_01):", dlg)
     fixed_battery_spin = QSpinBox(dlg)
     fixed_battery_spin.setRange(0, 9999)
@@ -3022,15 +3091,15 @@ def open_savegame_editor(self):
 
     ship_view_form = QFormLayout()
     ship_view_ship_cb = QComboBox(dlg)
-    ship_view_ship_cb.setEditable(True)
+    ship_view_ship_cb.setEditable(False)
     ship_view_form.addRow(_tr_or("savegame_editor.ship_view_archetype", "Ship:"), ship_view_ship_cb)
     ship_view_l.addLayout(ship_view_form)
     ship_view_3d = FreelancerModelPreviewWidget(
         _tr_or("savegame_editor.ship_view_preview", "Ship View"),
         dlg,
     )
-    ship_view_3d.set_render_style(flat_gray_material=True, wireframe_overlay=True)
-    ship_view_3d.setMinimumHeight(320)
+    ship_view_3d.set_render_style(flat_gray_material=True, wireframe_overlay=False)
+    ship_view_3d.setMinimumHeight(280)
     ship_view_l.addWidget(ship_view_3d, 1)
 
     preview_widgets = [sidebar_ship_preview, trent_character_3d, ship_view_3d]
@@ -3065,11 +3134,18 @@ def open_savegame_editor(self):
     bottom_row = QHBoxLayout()
     bottom_row.addStretch(1)
     save_btn = QPushButton(tr("savegame_editor.save"), dlg)
+    launch_freelancer_btn = QPushButton(_tr_or("savegame_editor.launch_freelancer", "Launch Freelancer"), dlg)
     validate_btn.setParent(dlg)
     close_btn = QPushButton(tr("dlg.close"), dlg)
+    launch_freelancer_btn.setStyleSheet(
+        "QPushButton { background: #188038; border-color: #2fb344; color: #ffffff; }"
+        "QPushButton:hover { background: #209a46; border-color: #36c65a; }"
+        "QPushButton:pressed { background: #126b2f; }"
+    )
     validate_btn.setProperty("variant", "secondary")
     close_btn.setProperty("variant", "secondary")
     bottom_row.addWidget(save_btn)
+    bottom_row.addWidget(launch_freelancer_btn)
     bottom_row.addWidget(validate_btn)
     bottom_row.addWidget(close_btn)
     lay.addLayout(bottom_row)
@@ -4224,8 +4300,8 @@ def open_savegame_editor(self):
             return txt.split(" - ", 1)[0].strip()
         return txt
 
-    def _setup_item_combo(cb: QComboBox, nicks: list[str]) -> None:
-        cb.setEditable(True)
+    def _setup_item_combo(cb: QComboBox, nicks: list[str], *, editable: bool = True) -> None:
+        cb.setEditable(bool(editable))
         cb.addItem("", "")
         for nick in nicks:
             cb.addItem(_item_ui_label(nick), nick)
@@ -4754,8 +4830,8 @@ def open_savegame_editor(self):
         else:
             _refresh_hardpoint_hint()
 
-    _setup_item_combo(ship_archetype_cb, _compatible_ship_nicks())
-    _setup_item_combo(ship_view_ship_cb, _previewable_ship_nicks())
+    _setup_item_combo(ship_archetype_cb, _compatible_ship_nicks(), editable=False)
+    _setup_item_combo(ship_view_ship_cb, _previewable_ship_nicks(), editable=False)
     if ship_view_ship_cb.count() > 1:
         ship_view_ship_cb.setCurrentIndex(1)
     _setup_item_combo(core_power_cb, power_nicks)
@@ -4989,6 +5065,7 @@ def open_savegame_editor(self):
             label = visited_scene.addText(disp)
             label.setDefaultTextColor(map_colors["text_current"] if is_current else (map_colors["text_visited"] if is_visited else map_colors["text_inactive"]))
             label.setPos(pt.x() + 8.0, pt.y() - 10.0)
+            label.setAcceptedMouseButtons(Qt.NoButton)
         rect = visited_scene.itemsBoundingRect().adjusted(-24, -24, 24, 24)
         visited_scene.setSceneRect(rect)
         visited_view.set_base_rect(rect)
@@ -6333,12 +6410,12 @@ def open_savegame_editor(self):
         _rebuild_base_combo(_current_system_nick(), _current_base_nick())
         ship_archetype_cb.blockSignals(True)
         ship_archetype_cb.clear()
-        _setup_item_combo(ship_archetype_cb, _compatible_ship_nicks())
+        _setup_item_combo(ship_archetype_cb, _compatible_ship_nicks(), editable=False)
         ship_archetype_cb.blockSignals(False)
         ship_view_current = _current_ship_view_nick()
         ship_view_ship_cb.blockSignals(True)
         ship_view_ship_cb.clear()
-        _setup_item_combo(ship_view_ship_cb, _previewable_ship_nicks())
+        _setup_item_combo(ship_view_ship_cb, _previewable_ship_nicks(), editable=False)
         _set_item_combo_value(ship_view_ship_cb, ship_view_current, add_missing=False)
         if not _current_ship_view_nick().strip() and ship_view_ship_cb.count() > 1:
             ship_view_ship_cb.setCurrentIndex(1)
@@ -7408,6 +7485,32 @@ def open_savegame_editor(self):
             return
         _save_to_path(cur)
 
+    def _launch_freelancer() -> None:
+        raw_game_path = str(game_path_edit.text() or self._cfg.get("settings.savegame_game_path", "") or "").strip()
+        game_root = self._canonical_game_dir_from_input(raw_game_path) if raw_game_path else Path("")
+        exe_path = self._find_freelancer_exe(game_root) if str(game_root).strip() else None
+        if exe_path is None:
+            QMessageBox.warning(
+                dlg,
+                tr("savegame_editor.title"),
+                tr("mod_manager.launch.no_exe").format(path=raw_game_path or str(game_root)),
+            )
+            return
+        try:
+            subprocess.Popen(
+                [str(exe_path)],
+                cwd=str(exe_path.parent),
+                close_fds=True,
+            )
+        except Exception as exc:
+            QMessageBox.warning(
+                dlg,
+                tr("savegame_editor.title"),
+                f"{tr('mod_manager.launch.failed')}\n{exc}",
+            )
+            return
+        self.statusBar().showMessage(tr("mod_manager.launch.started"))
+
     act_file_new = file_menu.addAction(_tr_or("savegame_editor.new_save", "New Save..."))
     act_file_open = file_menu.addAction(tr("savegame_editor.open"))
     recent_menu = file_menu.addMenu(_tr_or("savegame_editor.recent", "Open Recent"))
@@ -7492,6 +7595,7 @@ def open_savegame_editor(self):
         if _confirm_close_with_unsaved_changes():
             dlg.reject()
     save_btn.clicked.connect(_save)
+    launch_freelancer_btn.clicked.connect(_launch_freelancer)
     close_btn.clicked.connect(_request_close)
     act_file_refresh.triggered.connect(lambda: _refresh_savegame_list(auto_load=False))
     act_file_load_selected.triggered.connect(_load_selected)
@@ -7633,9 +7737,9 @@ def open_savegame_editor(self):
         act.triggered.connect(lambda _checked=False, c=code: _switch_language(c))
     def _apply_theme(theme_name: str) -> None:
         nonlocal current_theme
-        tname = str(theme_name or "Dark").strip()
+        tname = str(theme_name or DEFAULT_THEME_NAME).strip()
         if tname not in THEME_ORDER_SET or tname not in THEME_STYLES:
-            tname = "Dark"
+            tname = DEFAULT_THEME_NAME
         if tname == current_theme:
             return
         qss = THEME_STYLES.get(tname, "") + "\n" + THEME_FONT_LOCK_QSS
@@ -7655,9 +7759,9 @@ def open_savegame_editor(self):
                 act.setChecked(name == tname)
             except Exception:
                 pass
-    current_theme = str(self._cfg.get("settings.theme", "Dark") or "Dark").strip()
+    current_theme = str(self._cfg.get("settings.theme", DEFAULT_THEME_NAME) or DEFAULT_THEME_NAME).strip()
     if current_theme not in THEME_ORDER_SET or current_theme not in THEME_STYLES:
-        current_theme = "Dark"
+        current_theme = DEFAULT_THEME_NAME
     for name, act in theme_actions.items():
         act.triggered.connect(lambda _checked=False, n=name: _apply_theme(n))
     dlg.setStyleSheet(THEME_STYLES.get(current_theme, "") + "\n" + THEME_FONT_LOCK_QSS)
