@@ -1,3 +1,3 @@
 """Central version constant for FLAtlas Savegame Editor."""
 
-APP_VERSION = "v0.5.1"
+APP_VERSION = "v0.5.2"

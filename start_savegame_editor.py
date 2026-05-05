@@ -23,29 +23,74 @@ def _python_has_pefile(python_exe: str) -> bool:
         return False
 
 
+def _python_has_working_qt3d(python_exe: str) -> bool:
+    try:
+        proc = subprocess.run(
+            [
+                python_exe,
+                "-c",
+                (
+                    "import sys; "
+                    "from PySide6.QtWidgets import QApplication; "
+                    "app = QApplication(sys.argv); "
+                    "import PySide6.Qt3DExtras as E; "
+                    "ns = getattr(E, 'Qt3DExtras', E); "
+                    "getattr(ns, 'Qt3DWindow')()"
+                ),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=10,
+        )
+        return proc.returncode == 0
+    except Exception:
+        return False
+
+
+def _relaunch_with_python(python_exe: str) -> None:
+    env = dict(os.environ)
+    env["FLATLAS_SKIP_REEXEC"] = "1"
+    rc = subprocess.call([python_exe, str(Path(__file__).resolve()), *sys.argv[1:]], env=env)
+    raise SystemExit(rc)
+
+
 def _maybe_reexec_with_pefile_python() -> None:
-    # Re-exec once with a Python that has pefile so IDS/Ingame names resolve.
+    # Re-exec once if the current Python cannot resolve IDS names or cannot
+    # create Qt3DWindow. The Qt3D check must happen in a subprocess because
+    # broken Python/Qt combinations can crash natively.
     if getattr(sys, "frozen", False):
         return
     if os.environ.get("FLATLAS_SKIP_REEXEC", "") == "1":
         return
-    if _python_has_pefile(sys.executable):
+    current_has_pefile = _python_has_pefile(sys.executable)
+    current_has_qt3d = _python_has_working_qt3d(sys.executable)
+    if current_has_pefile and current_has_qt3d:
         return
     project_root = Path(__file__).resolve().parent
     candidates = [
         project_root / ".venv" / "Scripts" / "python.exe",
         project_root / ".venv" / "bin" / "python",
+        project_root.parent / "FL-Lingo" / ".venv" / "Scripts" / "python.exe",
+        project_root.parent / "FL-Lingo" / ".venv" / "Scripts" / "pythonw.exe",
         Path("/home/steven/FLEditor/.venv/bin/python"),
     ]
+    current_exe = Path(sys.executable).resolve()
     for candidate in candidates:
         c = str(candidate)
-        if not candidate.exists() or c == sys.executable:
+        if not candidate.exists():
             continue
-        if not _python_has_pefile(c):
+        try:
+            if candidate.resolve() == current_exe:
+                continue
+        except Exception:
+            if c == sys.executable:
+                continue
+        if not current_has_pefile and not _python_has_pefile(c):
             continue
-        env = dict(os.environ)
-        env["FLATLAS_SKIP_REEXEC"] = "1"
-        os.execve(c, [c, str(Path(__file__).resolve()), *sys.argv[1:]], env)
+        if not current_has_qt3d and not _python_has_working_qt3d(c):
+            continue
+        _relaunch_with_python(c)
 
 
 if __name__ == "__main__":

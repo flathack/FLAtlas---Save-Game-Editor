@@ -49,6 +49,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QSlider,
     QSizePolicy,
+    QSplitter,
     QSpinBox,
     QDoubleSpinBox,
     QTabWidget,
@@ -83,48 +84,93 @@ THEME_ORDER_SET = {str(n) for n in THEME_ORDER}
 
 THEME_STYLES: dict[str, str] = {
     "Light": """
-QDialog { background-color: #f6f7f9; color: #111111; }
-QMenuBar, QMenu { background: #f6f7f9; color: #111111; }
-QMenuBar::item:selected, QMenu::item:selected { background: #d9e6ff; color: #111111; }
-QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #111111; }
-QGroupBox { border: 1px solid #cfd3d8; border-radius: 0px; margin-top: 8px; padding-top: 6px; background: #ffffff; }
-QPushButton { background: #ffffff; border: 1px solid #c0c6ce; border-radius: 0px; padding: 6px 12px; color: #111111; }
-QPushButton:hover { background: #f2f5f8; border-color: #9ca7b4; }
-QPushButton:pressed { background: #e8edf3; }
-QPushButton:disabled { color: #7d8793; border-color: #d2d7dd; background: #f3f5f7; }
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #ffffff; color: #111111; border: 1px solid #c0c6ce; border-radius: 0px; min-height: 24px; selection-background-color: #2f6fed; selection-color: #ffffff; }
-QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #7d8793; border-color: #d2d7dd; background: #f3f5f7; }
-QComboBox QAbstractItemView { background: #ffffff; color: #111111; selection-background-color: #d9e6ff; selection-color: #111111; }
-QTabWidget::pane { border: 1px solid #cfd3d8; border-radius: 0px; top: -1px; background: #ffffff; }
-QTabBar::tab { background: #eceff3; border: 1px solid #cfd3d8; border-radius: 0px; padding: 6px 12px; margin-right: 2px; color: #111111; }
-QTabBar::tab:selected { background: #ffffff; border-color: #9ca7b4; }
-QTableWidget { gridline-color: #d9dde2; background: #ffffff; alternate-background-color: #f7f8fa; }
-QHeaderView::section { background: #eef1f5; border: 1px solid #d9dde2; padding: 4px; }
-QTableCornerButton::section { background: #eef1f5; border: 1px solid #d9dde2; }
-QProgressBar { border: 1px solid #cfd3d8; background: #ffffff; color: #111111; text-align: center; }
-QProgressBar::chunk { background: #2f6fed; }
+QDialog { background-color: #f0f2f5; color: #1a1a2e; }
+QWidget { color: #1a1a2e; font-family: "Segoe UI"; font-size: 10pt; }
+QMenuBar, QMenu { background: #e0e4ea; color: #1a1a2e; border: 1px solid #c0c8d4; }
+QMenuBar { border: 0; border-bottom: 1px solid #c0c8d4; padding: 4px 6px; }
+QMenuBar::item { background: transparent; border-radius: 6px; padding: 6px 10px; }
+QMenuBar::item:selected, QMenu::item:selected { background: #4a90d9; color: #ffffff; }
+QMenu::item { border-radius: 6px; padding: 8px 12px; }
+QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #1a1a2e; }
+QGroupBox { border: 1px solid #c0c8d4; border-radius: 8px; margin-top: 10px; padding: 10px 8px 8px 8px; background: #ffffff; }
+QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; color: #5a6070; font-weight: 700; }
+QPushButton { background: #2070cc; color: #ffffff; border: 1px solid #2070cc; border-radius: 6px; padding: 7px 11px; font-weight: 700; }
+QPushButton[variant="secondary"] { background: #e4e8f0; border: 1px solid #b8c0d0; color: #3a4050; }
+QPushButton[variant="secondary"]:hover { background: #e8ecf0; border-color: #2070cc; }
+QPushButton:hover { background: #4a90d9; border-color: #2070cc; }
+QPushButton[variant="secondary"]:hover { background: #e8ecf0; border-color: #2070cc; }
+QPushButton:pressed { background: #2060c0; }
+QPushButton:disabled { color: #8890a0; border-color: #c8ccd4; background: #c8ccd4; }
+QCheckBox { spacing: 8px; color: #1a1a2e; }
+QCheckBox::indicator { width: 15px; height: 15px; border-radius: 4px; border: 1px solid #c0c8d4; background: #ffffff; }
+QCheckBox::indicator:hover { border-color: #2070cc; }
+QCheckBox::indicator:checked { background: #4a90d9; border-color: #2070cc; }
+QSlider::groove:horizontal { height: 6px; border-radius: 3px; background: #e8ecf0; border: 1px solid #c0c8d4; }
+QSlider::sub-page:horizontal { background: #4a90d9; border-radius: 3px; }
+QSlider::handle:horizontal { width: 15px; height: 15px; margin: -6px 0; border-radius: 7px; background: #2060c0; border: 1px solid #ffffff; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit { background: #ffffff; color: #1a1a2e; border: 1px solid #c0c8d4; border-radius: 6px; min-height: 26px; padding: 5px 7px; selection-background-color: #4a90d9; selection-color: #ffffff; }
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QTextEdit:focus { border-color: #2070cc; background: #ffffff; }
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #8890a0; border-color: #c8ccd4; background: #e8ecf0; }
+QComboBox QAbstractItemView, QAbstractItemView { background: #ffffff; color: #1a1a2e; border: 1px solid #c0c8d4; selection-background-color: #4a90d9; selection-color: #ffffff; }
+QComboBox::drop-down { border: 0; width: 28px; }
+QTabWidget::pane { border: 1px solid #c0c8d4; border-radius: 7px; top: -1px; background: #ffffff; }
+QTabBar::tab { background: #e4e8f0; border: 1px solid #c0c8d4; border-bottom: 0; border-top-left-radius: 8px; border-top-right-radius: 8px; padding: 7px 11px; margin-right: 3px; color: #3a4050; }
+QTabBar::tab:selected { background: #ffffff; color: #1a1a2e; border-color: #2070cc; }
+QTableWidget { gridline-color: #c0c8d4; background: #ffffff; alternate-background-color: #e8ecf0; border: 1px solid #c0c8d4; border-radius: 6px; selection-background-color: #4a90d9; selection-color: #ffffff; }
+QHeaderView::section { background: #e8ecf0; color: #5a6070; border: 0; border-right: 1px solid #c0c8d4; border-bottom: 1px solid #c0c8d4; padding: 6px; font-weight: 700; }
+QTableCornerButton::section { background: #e8ecf0; border: 1px solid #c0c8d4; }
+QProgressBar { border: 1px solid #c0c8d4; border-radius: 4px; background: #ffffff; color: #1a1a2e; text-align: center; }
+QProgressBar::chunk { background: #4a90d9; border-radius: 4px; }
+QGraphicsView { background: #ffffff; border: 1px solid #c0c8d4; border-radius: 8px; }
+QSplitter::handle { background: #c0c8d4; }
+QScrollBar:vertical { background: #f0f2f5; width: 10px; margin: 0; }
+QScrollBar::handle:vertical { background: #c0c8d4; border-radius: 5px; min-height: 28px; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 """,
     "Dark": """
-QDialog { background-color: #171a1f; color: #e6e8eb; }
-QMenuBar, QMenu { background: #171a1f; color: #e6e8eb; }
-QMenuBar::item:selected, QMenu::item:selected { background: #2a3442; color: #ffffff; }
-QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #e6e8eb; }
-QGroupBox { border: 1px solid #3a404a; border-radius: 0px; margin-top: 8px; padding-top: 6px; background: #1d2128; }
-QPushButton { background: #242a33; border: 1px solid #4a5564; border-radius: 0px; padding: 6px 12px; color: #eef1f5; }
-QPushButton:hover { background: #2b3240; border-color: #637389; }
-QPushButton:pressed { background: #232a37; }
-QPushButton:disabled { color: #8b95a3; border-color: #434d5b; background: #212733; }
-QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { background: #12161c; color: #e6e8eb; border: 1px solid #4a5564; border-radius: 0px; min-height: 24px; selection-background-color: #2f6fed; selection-color: #ffffff; }
-QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #8b95a3; border-color: #3c4654; background: #1a1f28; }
-QComboBox QAbstractItemView { background: #171b22; color: #e6e8eb; selection-background-color: #2a3442; selection-color: #ffffff; }
-QTabWidget::pane { border: 1px solid #3a404a; border-radius: 0px; top: -1px; background: #171b22; }
-QTabBar::tab { background: #232a33; border: 1px solid #3a404a; border-radius: 0px; padding: 6px 12px; margin-right: 2px; color: #d2d8df; }
-QTabBar::tab:selected { background: #2c3440; color: #ffffff; border-color: #637389; }
-QTableWidget { gridline-color: #323a45; background: #12161c; alternate-background-color: #171c24; }
-QHeaderView::section { background: #202731; border: 1px solid #323a45; padding: 4px; }
-QTableCornerButton::section { background: #202731; border: 1px solid #323a45; }
-QProgressBar { border: 1px solid #3a404a; background: #12161c; color: #e6e8eb; text-align: center; }
-QProgressBar::chunk { background: #3c82dc; }
+QDialog { background-color: #08111f; color: #eaf3ff; }
+QWidget { color: #eaf3ff; font-family: "Segoe UI"; font-size: 10pt; }
+QMenuBar, QMenu { background: #0b1728; color: #eaf3ff; border: 1px solid #274364; }
+QMenuBar { border: 0; border-bottom: 1px solid #274364; padding: 4px 6px; }
+QMenuBar::item { background: transparent; border-radius: 6px; padding: 6px 10px; }
+QMenuBar::item:selected, QMenu::item:selected { background: #0f8eb8; color: #f8fdff; }
+QMenu::item { border-radius: 6px; padding: 8px 12px; }
+QLabel, QGroupBox::title, QAbstractButton, QTableWidget, QHeaderView::section { color: #eaf3ff; }
+QGroupBox { border: 1px solid #274364; border-radius: 8px; margin-top: 10px; padding: 10px 8px 8px 8px; background: #0e1a2e; }
+QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; color: #9fb0ca; font-weight: 700; }
+QPushButton { background: #0f8eb8; color: #f7fbff; border: 1px solid #23b8d7; border-radius: 6px; padding: 7px 11px; font-weight: 700; }
+QPushButton[variant="secondary"] { background: #111f34; border: 1px solid #31516f; color: #d8e9fb; }
+QPushButton[variant="secondary"]:hover { background: #182d4a; border-color: #23b8d7; }
+QPushButton:hover { background: #182d4a; border-color: #23b8d7; }
+QPushButton[variant="secondary"]:hover { background: #182d4a; border-color: #23b8d7; }
+QPushButton:pressed { background: #143c58; }
+QPushButton:disabled { color: #8492a7; border-color: #26354b; background: #26354b; }
+QCheckBox { spacing: 8px; color: #eaf3ff; }
+QCheckBox::indicator { width: 15px; height: 15px; border-radius: 4px; border: 1px solid #274364; background: #0e1a2e; }
+QCheckBox::indicator:hover { border-color: #23b8d7; }
+QCheckBox::indicator:checked { background: #0f8eb8; border-color: #23b8d7; }
+QSlider::groove:horizontal { height: 6px; border-radius: 3px; background: #0e1a2e; border: 1px solid #274364; }
+QSlider::sub-page:horizontal { background: #0f8eb8; border-radius: 3px; }
+QSlider::handle:horizontal { width: 15px; height: 15px; margin: -6px 0; border-radius: 7px; background: #66d9ff; border: 1px solid #f8fdff; }
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit { background: #0e1a2e; color: #eaf3ff; border: 1px solid #274364; border-radius: 6px; min-height: 26px; padding: 5px 7px; selection-background-color: #0f8eb8; selection-color: #f8fdff; }
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QTextEdit:focus { border-color: #23b8d7; background: #14233a; }
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { color: #8492a7; border-color: #26354b; background: #111f34; }
+QComboBox QAbstractItemView, QAbstractItemView { background: #0e1a2e; color: #eaf3ff; border: 1px solid #274364; selection-background-color: #0f8eb8; selection-color: #f8fdff; }
+QComboBox::drop-down { border: 0; width: 28px; }
+QTabWidget::pane { border: 1px solid #274364; border-radius: 7px; top: -1px; background: #0e1a2e; }
+QTabBar::tab { background: #111f34; border: 1px solid #274364; border-bottom: 0; border-top-left-radius: 8px; border-top-right-radius: 8px; padding: 7px 11px; margin-right: 3px; color: #d8e9fb; }
+QTabBar::tab:selected { background: #14233a; color: #eaf3ff; border-color: #23b8d7; }
+QTableWidget { gridline-color: #274364; background: #0e1a2e; alternate-background-color: #14233a; border: 1px solid #274364; border-radius: 6px; selection-background-color: #0f8eb8; selection-color: #f8fdff; }
+QHeaderView::section { background: #14233a; color: #9fb0ca; border: 0; border-right: 1px solid #274364; border-bottom: 1px solid #274364; padding: 6px; font-weight: 700; }
+QTableCornerButton::section { background: #14233a; border: 1px solid #274364; }
+QProgressBar { border: 1px solid #274364; border-radius: 4px; background: #0e1a2e; color: #eaf3ff; text-align: center; }
+QProgressBar::chunk { background: #0f8eb8; border-radius: 4px; }
+QGraphicsView { background: #0e1a2e; border: 1px solid #274364; border-radius: 8px; }
+QSplitter::handle { background: #274364; }
+QScrollBar:vertical { background: #08111f; width: 10px; margin: 0; }
+QScrollBar::handle:vertical { background: #274364; border-radius: 5px; min-height: 28px; }
+QScrollBar::handle:vertical:hover { background: #23b8d7; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 """,
 }
 # Keep typography stable across style states (hover/pressed/selected),
@@ -2368,7 +2414,7 @@ def open_savegame_editor(self):
     game_path_edit = QLineEdit(game_path)
     game_path_header_edit = QLineEdit(dlg)
     game_path_header_edit.setReadOnly(True)
-    game_path_header_edit.setMinimumWidth(320)
+    game_path_header_edit.setMinimumWidth(220)
     game_path_header_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
     game_path_header_edit.setClearButtonEnabled(False)
     game_path_header_edit.setPlaceholderText(_tr_or("savegame_editor.game_path_missing", "No Freelancer path selected"))
@@ -2380,7 +2426,7 @@ def open_savegame_editor(self):
 
     savegame_cb = QComboBox(dlg)
     savegame_cb.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-    savegame_cb.setMinimumWidth(360)
+    savegame_cb.setMinimumWidth(240)
     game_path_host = QWidget(dlg)
     game_path_l = QHBoxLayout(game_path_host)
     game_path_l.setContentsMargins(0, 0, 0, 0)
@@ -2397,7 +2443,7 @@ def open_savegame_editor(self):
     top_row.setContentsMargins(0, 0, 0, 0)
     top_row.setSpacing(6)
     top_row.addWidget(game_path_host, 1)
-    top_row.addWidget(save_sel_host, 0)
+    top_row.addWidget(save_sel_host, 1)
     lay.addLayout(top_row)
     _refresh_game_path_header()
 
@@ -2448,13 +2494,12 @@ def open_savegame_editor(self):
 
     load_progress_timer.timeout.connect(_tick_loading_progress)
 
-    content_row = QHBoxLayout()
-    content_row.setContentsMargins(0, 0, 0, 0)
-    content_row.setSpacing(10)
+    content_splitter = QSplitter(Qt.Horizontal, dlg)
+    content_splitter.setChildrenCollapsible(False)
+    content_splitter.setHandleWidth(8)
     sidebar = QWidget(dlg)
-    sidebar.setMinimumWidth(320)
-    sidebar.setMaximumWidth(380)
-    sidebar.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+    sidebar.setMinimumWidth(250)
+    sidebar.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
     sidebar_l = QVBoxLayout(sidebar)
     sidebar_l.setContentsMargins(0, 0, 0, 0)
     sidebar_l.setSpacing(8)
@@ -2497,11 +2542,12 @@ def open_savegame_editor(self):
         except Exception:
             pass
 
-    content_row.addWidget(sidebar, 0)
-    content_row.addWidget(right_tabs, 1)
-    content_row.setStretch(0, 0)
-    content_row.setStretch(1, 1)
-    lay.addLayout(content_row, 1)
+    content_splitter.addWidget(sidebar)
+    content_splitter.addWidget(right_tabs)
+    content_splitter.setStretchFactor(0, 0)
+    content_splitter.setStretchFactor(1, 1)
+    content_splitter.setSizes([300, 780])
+    lay.addWidget(content_splitter, 1)
 
     form = QFormLayout()
     rank_spin = QSpinBox(dlg)
@@ -2526,10 +2572,9 @@ def open_savegame_editor(self):
     base_cb.setEditable(True)
     base_cb.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
     base_cb.setMinimumContentsLength(20)
-    sidebar_field_width = 280
     for w in (rank_spin, money_spin, description_edit, rep_group_cb, system_cb, base_cb):
-        w.setMinimumWidth(sidebar_field_width)
-        w.setMaximumWidth(sidebar_field_width)
+        w.setMinimumWidth(180)
+        w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
     form.addRow(tr("savegame_editor.rank"), rank_spin)
     form.addRow(tr("savegame_editor.money"), money_spin)
     form.addRow(tr("savegame_editor.description"), description_edit)
@@ -2552,7 +2597,7 @@ def open_savegame_editor(self):
     )
     sidebar_ship_preview.set_render_style(flat_gray_material=True, wireframe_overlay=True)
     sidebar_ship_preview.set_compact_mode(True)
-    sidebar_ship_preview.setMinimumHeight(260)
+    sidebar_ship_preview.setMinimumHeight(170)
     sidebar_l.addWidget(sidebar_ship_preview)
     sidebar_l.addStretch(1)
 
@@ -2814,7 +2859,7 @@ def open_savegame_editor(self):
         _tr_or("savegame_editor.trent_preview_character", "Trent Character"),
         dlg,
     )
-    trent_character_3d.setMinimumHeight(700)
+    trent_character_3d.setMinimumHeight(320)
     trent_right_layout.addWidget(trent_character_3d, 1)
     trent_lock_lbl = QLabel("", dlg)
     trent_lock_lbl.setWordWrap(True)
@@ -2985,7 +3030,7 @@ def open_savegame_editor(self):
         dlg,
     )
     ship_view_3d.set_render_style(flat_gray_material=True, wireframe_overlay=True)
-    ship_view_3d.setMinimumHeight(720)
+    ship_view_3d.setMinimumHeight(320)
     ship_view_l.addWidget(ship_view_3d, 1)
 
     preview_widgets = [sidebar_ship_preview, trent_character_3d, ship_view_3d]
@@ -3022,6 +3067,8 @@ def open_savegame_editor(self):
     save_btn = QPushButton(tr("savegame_editor.save"), dlg)
     validate_btn.setParent(dlg)
     close_btn = QPushButton(tr("dlg.close"), dlg)
+    validate_btn.setProperty("variant", "secondary")
+    close_btn.setProperty("variant", "secondary")
     bottom_row.addWidget(save_btn)
     bottom_row.addWidget(validate_btn)
     bottom_row.addWidget(close_btn)

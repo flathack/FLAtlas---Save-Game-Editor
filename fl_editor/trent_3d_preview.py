@@ -4,6 +4,7 @@ import importlib
 import importlib.util
 from dataclasses import dataclass, replace
 import math
+import os
 from struct import pack, unpack_from
 import sys
 import tempfile
@@ -119,6 +120,8 @@ def _ensure_bridge_loaded() -> bool:
 
 
 def bridge_available() -> bool:
+    if os.environ.get("FLATLAS_DISABLE_3D_PREVIEW", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return False
     if not _ensure_bridge_loaded():
         return False
     try:

@@ -2,6 +2,15 @@
 
 All notable changes to FLAtlas Savegame Editor are documented in this file.
 
+## v0.5.2 - 2026-05-05
+
+### Improvements
+- Updated the app icon and splash screen with the Anubis shield artwork.
+- Improved standalone startup when launched from another project's Python environment.
+
+### Bug Fixes
+- Disabled the Qt3D preview during standalone startup to avoid native Qt crashes on affected environments.
+
 ## v0.5.1 - 2026-03-30
 
 ### Improvements

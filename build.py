@@ -47,6 +47,7 @@ def _ensure_clean_dirs() -> None:
 def _build_data_args(sep: str) -> list[str]:
     data_files = [
         PROJECT_ROOT / "fl_editor" / "translations.json",
+        PROJECT_ROOT / "fl_editor" / "images" / "anubis_shield.png",
         PROJECT_ROOT / "fl_editor" / "images" / "icon.png",
         PROJECT_ROOT / "fl_editor" / "images" / "splash.png",
     ]

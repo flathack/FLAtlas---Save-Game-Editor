@@ -22,6 +22,7 @@ BRIDGE_MODULE_FILES = (
 
 datas = [
     (str(PROJECT_ROOT / "fl_editor" / "translations.json"), "fl_editor"),
+    (str(PROJECT_ROOT / "fl_editor" / "images" / "anubis_shield.png"), "fl_editor/images"),
     (str(PROJECT_ROOT / "fl_editor" / "images" / "icon.png"), "fl_editor/images"),
     (str(PROJECT_ROOT / "fl_editor" / "images" / "splash.png"), "fl_editor/images"),
 ]
