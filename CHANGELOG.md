@@ -2,6 +2,18 @@
 
 All notable changes to FLAtlas Savegame Editor are documented in this file.
 
+## v0.6.1 - 2026-05-06
+
+### Improvements
+- Added Multiverse sector tabs to the universe map for mods with multiple map sectors.
+- Restored stable Trent 3D preview coloring with a thin mesh overlay fallback.
+- Updated Discord and issue tracker links.
+
+### Bug Fixes
+- Fixed a startup crash in the universe map sector tab initialization.
+- Prevented story-locked savegames from changing systems via the universe map.
+- Fixed Trent 3D texture/material loading crashes on affected Qt3D/RHI setups.
+
 ## v0.6.0 - 2026-05-05
 
 ### New Features
