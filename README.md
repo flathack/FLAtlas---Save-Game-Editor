@@ -43,6 +43,6 @@ Die fertigen Dateien landen in `dist/`.
 
 ## Links
 
-- Discord: <https://discord.gg/RENtMMcc>
+- Discord: <https://discord.gg/fY9qweRWGn>
 - Issues: <https://github.com/flathack/FLAtlas---Save-Game-Editor/issues>
 - Releases: <https://github.com/flathack/FLAtlas---Save-Game-Editor/releases>

@@ -315,14 +315,13 @@ def _double_sided_native_geometry(geometry):
             return geometry
 
 
-def _configure_line_wireframe_material(material) -> list[object]:
+def _configure_line_wireframe_material(material, *, width: float = 0.85) -> list[object]:
     refs: list[object] = []
     try:
         import PySide6.Qt3DRender as _Qt3DRender
 
         render_ns = getattr(_Qt3DRender, "Qt3DRender", _Qt3DRender)
         depth_cls = getattr(render_ns, "QDepthTest", None)
-        no_depth_mask_cls = getattr(render_ns, "QNoDepthMask", None)
         line_width_cls = getattr(render_ns, "QLineWidth", None)
         effect = material.effect() if hasattr(material, "effect") else None
         if effect is None:
@@ -331,22 +330,18 @@ def _configure_line_wireframe_material(material) -> list[object]:
             for render_pass in list(technique.renderPasses() if hasattr(technique, "renderPasses") else []):
                 if depth_cls is not None:
                     depth_state = depth_cls(render_pass)
-                    depth_fn = getattr(depth_cls, "Always", None)
+                    depth_fn = getattr(depth_cls, "LessOrEqual", None)
                     if depth_fn is None:
                         enum_cls = getattr(depth_cls, "DepthFunction", None)
-                        depth_fn = getattr(enum_cls, "Always", None) if enum_cls is not None else None
+                        depth_fn = getattr(enum_cls, "LessOrEqual", None) if enum_cls is not None else None
                     if depth_fn is not None and hasattr(depth_state, "setDepthFunction"):
                         depth_state.setDepthFunction(depth_fn)
                     render_pass.addRenderState(depth_state)
                     refs.append(depth_state)
-                if no_depth_mask_cls is not None:
-                    no_depth_mask = no_depth_mask_cls(render_pass)
-                    render_pass.addRenderState(no_depth_mask)
-                    refs.append(no_depth_mask)
                 if line_width_cls is not None:
                     line_width = line_width_cls(render_pass)
                     if hasattr(line_width, "setValue"):
-                        line_width.setValue(1.5)
+                        line_width.setValue(float(width))
                     render_pass.addRenderState(line_width)
                     refs.append(line_width)
     except Exception:
@@ -1012,6 +1007,7 @@ class FreelancerModelPreviewWidget(QWidget):
         self._force_flat_gray_material = False
         self._show_wireframe_overlay = False
         self._force_light_mode: bool | None = None
+        self._theme_name = "Dark"
         self._compact_mode = False
 
         layout = QVBoxLayout(self)
@@ -1085,18 +1081,21 @@ class FreelancerModelPreviewWidget(QWidget):
         self._reset_btn.setVisible(True)
 
         self._root = qt3d.QEntity3D()
+        self._light_refs: list[object] = []
         light_entity = qt3d.QEntity3D(self._root)
         light = qt3d.QDirectionalLight3D(light_entity)
         light.setWorldDirection(qt3d.QVector3D(-0.7, -1.0, -0.5))
         if hasattr(light, "setIntensity"):
             light.setIntensity(1.35)
         light_entity.addComponent(light)
+        self._light_refs.append(light)
         fill_light_entity = qt3d.QEntity3D(self._root)
         fill_light = qt3d.QDirectionalLight3D(fill_light_entity)
         fill_light.setWorldDirection(qt3d.QVector3D(0.35, -0.25, 1.0))
         if hasattr(fill_light, "setIntensity"):
             fill_light.setIntensity(0.9)
         fill_light_entity.addComponent(fill_light)
+        self._light_refs.append(fill_light)
 
         self._camera = self._view3d.camera()
         self._camera.lens().setPerspectiveProjection(45.0, 16.0 / 9.0, 0.1, 50000.0)
@@ -1104,6 +1103,7 @@ class FreelancerModelPreviewWidget(QWidget):
         self._camera.setViewCenter(qt3d.QVector3D(0.0, 0.0, 0.0))
         self._view3d.setRootEntity(self._root)
         self._apply_background_color()
+        self._apply_light_profile()
         self._meta_label.setText("Ready for Freelancer model data")
 
     def set_model_path(self, model_path: Path | None, *, caption: str = "") -> None:
@@ -1139,6 +1139,7 @@ class FreelancerModelPreviewWidget(QWidget):
 
     def refresh_theme(self) -> None:
         self._apply_background_color()
+        self._apply_light_profile()
         self._last_style_key = None
         self._apply_styles()
         if self._force_flat_gray_material and self._last_model_paths:
@@ -1149,21 +1150,154 @@ class FreelancerModelPreviewWidget(QWidget):
             except Exception:
                 pass
 
-    def set_theme_mode(self, light_mode: bool | None) -> None:
+    def set_theme_mode(self, light_mode: bool | None = None, theme_name: str | None = None) -> None:
         normalized_mode = None if light_mode is None else bool(light_mode)
-        if normalized_mode == self._force_light_mode:
+        normalized_theme = str(theme_name or ("Light" if normalized_mode else "Dark")).strip()
+        if normalized_mode == self._force_light_mode and normalized_theme == self._theme_name:
             self.refresh_theme()
             return
         self._force_light_mode = normalized_mode
+        self._theme_name = normalized_theme
         self.refresh_theme()
 
     def _theme_is_light(self) -> bool:
+        if str(self._theme_name or "").strip() == "Light":
+            return True
         if self._force_light_mode is not None:
             return bool(self._force_light_mode)
         try:
             return self.palette().window().color().lightnessF() >= 0.5
         except Exception:
             return False
+
+    def _theme_profile(self) -> dict[str, object]:
+        theme = str(self._theme_name or "").strip()
+        if theme == "Light":
+            return {
+                "bg": QColor("#f0f2f5"),
+                "card": "rgba(255, 255, 255, 0.34)",
+                "border": "#b8d2e8",
+                "title": "#15202b",
+                "meta": "#4f6b82",
+                "hint": "#5d7184",
+                "status": "rgba(255, 255, 255, 0.28)",
+                "flat_ambient": QColor(206, 216, 224),
+                "flat_diffuse": QColor(232, 238, 244),
+                "flat_specular": QColor(150, 165, 178),
+                "component_hues": (210, 34, 126, 6, 272, 58, 188, 340, 92, 240, 156, 316),
+                "component_sat": (58, 92),
+                "component_val": (188, 224),
+                "wireframe": QColor(54, 58, 64),
+                "dfm_light": 134,
+                "main_light": 1.65,
+                "fill_light": 1.25,
+            }
+        if theme == "SWAT BlackOps":
+            return {
+                "bg": QColor("#151515"),
+                "card": "rgba(20, 20, 20, 0.30)",
+                "border": "#353535",
+                "title": "#f5f5f5",
+                "meta": "#999999",
+                "hint": "#999999",
+                "status": "rgba(12, 12, 12, 0.34)",
+                "flat_ambient": QColor(96, 96, 96),
+                "flat_diffuse": QColor(154, 154, 154),
+                "flat_specular": QColor(70, 70, 70),
+                "component_hues": (0, 25, 45, 210, 115, 275, 190, 330, 80, 240, 150, 310),
+                "component_sat": (34, 82),
+                "component_val": (96, 168),
+                "wireframe": QColor(28, 28, 28),
+                "dfm_light": 112,
+                "main_light": 1.30,
+                "fill_light": 0.95,
+            }
+        if theme == "Freelancer":
+            return {
+                "bg": QColor("#030812"),
+                "card": "rgba(7, 13, 43, 0.22)",
+                "border": "#00aeea",
+                "title": "#d8f7ff",
+                "meta": "#7edfff",
+                "hint": "#7edfff",
+                "status": "rgba(3, 8, 18, 0.34)",
+                "flat_ambient": QColor(112, 136, 150),
+                "flat_diffuse": QColor(176, 194, 204),
+                "flat_specular": QColor(82, 210, 238),
+                "component_hues": (194, 210, 180, 45, 275, 330, 155, 235, 88, 16, 300, 128),
+                "component_sat": (72, 132),
+                "component_val": (132, 218),
+                "wireframe": QColor(18, 24, 30),
+                "dfm_light": 122,
+                "main_light": 1.45,
+                "fill_light": 1.10,
+            }
+        return {
+            "bg": QColor("#08111f"),
+            "card": "rgba(14, 26, 46, 0.26)",
+            "border": "#274364",
+            "title": "#eaf3ff",
+            "meta": "#9fb0ca",
+            "hint": "#9fb0ca",
+            "status": "rgba(8, 17, 31, 0.34)",
+            "flat_ambient": QColor(114, 128, 142),
+            "flat_diffuse": QColor(182, 194, 205),
+            "flat_specular": QColor(76, 96, 112),
+            "component_hues": (210, 28, 122, 4, 270, 54, 188, 338, 92, 238, 156, 314),
+            "component_sat": (72, 126),
+            "component_val": (126, 202),
+            "wireframe": QColor(20, 24, 30),
+            "dfm_light": 118,
+            "main_light": 1.38,
+            "fill_light": 1.00,
+        }
+
+    def _component_color_for_geometry(self, geometry, component_index: int = 0) -> QColor:
+        profile = self._theme_profile()
+        hues = tuple(profile.get("component_hues", (210, 30, 120, 0, 270, 60, 190, 340, 90, 240, 155, 315)))
+        sat_range = tuple(profile.get("component_sat", (80, 150)))
+        val_range = tuple(profile.get("component_val", (140, 220)))
+        material_name = str(getattr(geometry, "material_name", "") or "").strip().lower()
+        if material_name:
+            seed = sum((idx + 1) * ord(ch) for idx, ch in enumerate(material_name))
+            seed ^= int(component_index) * 1103515245
+        else:
+            position_count = len(getattr(geometry, "positions", ()) or ())
+            index_count = len(getattr(geometry, "indices", ()) or ())
+            seed = int(component_index) * 97 + position_count * 31 + index_count * 17
+        hue = int(hues[seed % len(hues)]) if hues else int(seed % 360)
+        sat_min, sat_max = int(sat_range[0]), int(sat_range[-1])
+        val_min, val_max = int(val_range[0]), int(val_range[-1])
+        sat = max(0, min(255, sat_min + (seed // 11) % max(1, sat_max - sat_min + 1)))
+        val = max(0, min(255, val_min + (seed // 29) % max(1, val_max - val_min + 1)))
+        return QColor.fromHsv(hue % 360, sat, val)
+
+    def _component_ambient_for(self, diffuse: QColor) -> QColor:
+        if self._theme_is_light():
+            return QColor(
+                max(0, int(diffuse.red() * 0.68)),
+                max(0, int(diffuse.green() * 0.68)),
+                max(0, int(diffuse.blue() * 0.68)),
+            )
+        return QColor(
+            max(0, int(diffuse.red() * 0.48)),
+            max(0, int(diffuse.green() * 0.48)),
+            max(0, int(diffuse.blue() * 0.48)),
+        )
+
+    def _wireframe_color(self) -> QColor:
+        return QColor(self._theme_profile().get("wireframe", QColor(24, 24, 24)))
+
+    def _apply_light_profile(self) -> None:
+        profile = self._theme_profile()
+        if not getattr(self, "_light_refs", None):
+            return
+        for idx, light in enumerate(list(self._light_refs)):
+            try:
+                if hasattr(light, "setIntensity"):
+                    light.setIntensity(float(profile["main_light"] if idx == 0 else profile["fill_light"]))
+            except Exception:
+                pass
 
     def set_compact_mode(self, compact: bool = True) -> None:
         compact_mode = bool(compact)
@@ -1204,6 +1338,7 @@ class FreelancerModelPreviewWidget(QWidget):
         loaded_names: list[str] = []
         all_bounds: list[_SimpleBounds | None] = []
         total_geometry_count = 0
+        component_index = 0
         body_part_bounds: _SimpleBounds | None = None
         global_preview_transform = _character_preview_transform() if any(path.suffix.lower() == ".dfm" for path in valid_paths) else None
         for model_path in valid_paths:
@@ -1252,11 +1387,28 @@ class FreelancerModelPreviewWidget(QWidget):
                 geometries = tuple(_apply_transform_to_geometry(geometry, global_preview_transform) for geometry in geometries)
                 bounds = _build_simple_bounds([pos for geometry in geometries for pos in geometry.positions])
             for geometry in geometries:
+                geometry_component_index = component_index
+                component_index += 1
                 if scene_data is None:
-                    entity = self._build_dfm_geometry_entity(qt3d_mod, geometry)
+                    # DFM character textures are embedded in many Freelancer mods and
+                    # Qt3D/RHI handles them inconsistently. The v0.5.1-style material
+                    # colors are much more reliable for Trent, with wireframe as backup.
+                    texture_path = None
+                    entity = self._build_dfm_geometry_entity(
+                        qt3d_mod,
+                        geometry,
+                        texture_path=texture_path,
+                        component_index=geometry_component_index,
+                    )
                 else:
                     scene_mod = sys.modules[f"{_BRIDGE_PACKAGE}.native_preview_scene_data"]
-                    entity = self._build_geometry_entity(qt3d_mod, scene_mod, scene_data, geometry)
+                    entity = self._build_geometry_entity(
+                        qt3d_mod,
+                        scene_mod,
+                        scene_data,
+                        geometry,
+                        component_index=geometry_component_index,
+                    )
                 if entity is not None:
                     self._scene_entities.append(entity)
                     total_geometry_count += 1
@@ -1273,25 +1425,21 @@ class FreelancerModelPreviewWidget(QWidget):
         if self._container is not None:
             self._container.show()
 
-    def _build_geometry_entity(self, qt3d_mod, scene_mod, scene_data, geometry):
+    def _build_geometry_entity(self, qt3d_mod, scene_mod, scene_data, geometry, *, component_index: int = 0):
         try:
             qt3d = sys.modules[f"{_BRIDGE_PACKAGE}.qt3d_compat"]
             entity = qt3d.QEntity3D(self._root)
             render_geometry = _double_sided_native_geometry(geometry)
             renderer = qt3d_mod.build_native_geometry_renderer(render_geometry, owner=entity)
             if self._force_flat_gray_material:
-                light_mode = self._theme_is_light()
+                profile = self._theme_profile()
+                diffuse = self._component_color_for_geometry(geometry, component_index)
                 material = qt3d.QPhongMaterial3D(entity)
-                if light_mode:
-                    material.setAmbient(QColor(88, 88, 88))
-                    material.setDiffuse(QColor(122, 122, 122))
-                    material.setSpecular(QColor(28, 28, 28))
-                else:
-                    material.setAmbient(QColor(132, 132, 132))
-                    material.setDiffuse(QColor(196, 196, 196))
-                    material.setSpecular(QColor(56, 56, 56))
+                material.setAmbient(self._component_ambient_for(diffuse))
+                material.setDiffuse(diffuse)
+                material.setSpecular(profile["flat_specular"])
                 if hasattr(material, "setShininess"):
-                    material.setShininess(8.0)
+                    material.setShininess(16.0 if self._theme_is_light() else 11.0)
                 if hasattr(qt3d_mod, "_disable_backface_culling"):
                     qt3d_mod._disable_backface_culling(material)
             else:
@@ -1327,27 +1475,42 @@ class FreelancerModelPreviewWidget(QWidget):
             entity.addComponent(material)
             entity.addComponent(transform)
             self._material_refs.append(material)
-            if self._show_wireframe_overlay and hasattr(qt3d_mod, "build_native_wireframe_renderer"):
-                wire_entity = qt3d.QEntity3D(self._root)
-                wire_renderer = qt3d_mod.build_native_wireframe_renderer(geometry, owner=wire_entity)
-                wire_material = qt3d.QPhongMaterial3D(wire_entity)
-                wire_material.setAmbient(QColor(0, 0, 0))
-                wire_material.setDiffuse(QColor(0, 0, 0))
-                wire_material.setSpecular(QColor(0, 0, 0))
-                if hasattr(wire_material, "setShininess"):
-                    wire_material.setShininess(1.0)
-                self._material_refs.extend(_configure_line_wireframe_material(wire_material))
-                wire_transform = qt3d.QTransform3D(wire_entity)
-                if hasattr(wire_transform, "setScale"):
-                    wire_transform.setScale(1.001)
-                wire_entity.addComponent(wire_renderer)
-                wire_entity.addComponent(wire_material)
-                wire_entity.addComponent(wire_transform)
-                self._scene_entities.append(wire_entity)
-                self._material_refs.append(wire_material)
+            self._add_wireframe_overlay(qt3d, qt3d_mod, geometry)
             return entity
         except Exception:
             return None
+
+    def _add_wireframe_overlay(self, qt3d, qt3d_mod, geometry) -> None:
+        if not self._show_wireframe_overlay or not hasattr(qt3d_mod, "build_native_wireframe_renderer"):
+            return
+        try:
+            wire_entity = qt3d.QEntity3D(self._root)
+            wire_renderer = qt3d_mod.build_native_wireframe_renderer(geometry, owner=wire_entity)
+            if wire_renderer is None:
+                try:
+                    wire_entity.setParent(None)
+                    wire_entity.deleteLater()
+                except Exception:
+                    pass
+                return
+            wire_color = self._wireframe_color()
+            wire_material = qt3d.QPhongMaterial3D(wire_entity)
+            wire_material.setAmbient(wire_color)
+            wire_material.setDiffuse(wire_color)
+            wire_material.setSpecular(QColor(0, 0, 0))
+            if hasattr(wire_material, "setShininess"):
+                wire_material.setShininess(1.0)
+            self._material_refs.extend(_configure_line_wireframe_material(wire_material, width=0.85))
+            wire_transform = qt3d.QTransform3D(wire_entity)
+            if hasattr(wire_transform, "setScale"):
+                wire_transform.setScale(1.001)
+            wire_entity.addComponent(wire_renderer)
+            wire_entity.addComponent(wire_material)
+            wire_entity.addComponent(wire_transform)
+            self._scene_entities.append(wire_entity)
+            self._material_refs.append(wire_material)
+        except Exception:
+            return
 
     def _clear_scene_entities(self) -> None:
         for entity in self._scene_entities:
@@ -1360,7 +1523,14 @@ class FreelancerModelPreviewWidget(QWidget):
         self._texture_refs.clear()
         self._material_refs.clear()
 
-    def _build_dfm_geometry_entity(self, qt3d_mod, geometry, *, texture_path: Path | None = None):
+    def _build_dfm_geometry_entity(
+        self,
+        qt3d_mod,
+        geometry,
+        *,
+        texture_path: Path | None = None,
+        component_index: int = 0,
+    ):
         try:
             qt3d = sys.modules[f"{_BRIDGE_PACKAGE}.qt3d_compat"]
             entity = qt3d.QEntity3D(self._root)
@@ -1385,10 +1555,23 @@ class FreelancerModelPreviewWidget(QWidget):
                     qt3d_mod._disable_backface_culling(material)
             if material is None:
                 material = qt3d.QPhongMaterial3D(entity)
-                diffuse = _material_color(geometry.material_name)
-                material.setAmbient(QColor(min(255, int(diffuse.red() * 0.72) + 36), min(255, int(diffuse.green() * 0.72) + 36), min(255, int(diffuse.blue() * 0.72) + 36)))
-                material.setDiffuse(diffuse.lighter(118))
-                material.setSpecular(QColor(210, 214, 220))
+                profile = self._theme_profile()
+                light_boost = float(profile.get("dfm_light", 118.0)) / 118.0
+                diffuse = (
+                    self._component_color_for_geometry(geometry, component_index)
+                    if self._force_flat_gray_material
+                    else _material_color(geometry.material_name)
+                )
+                ambient_base = 42 if self._theme_is_light() else 36
+                material.setAmbient(
+                    QColor(
+                        min(255, int((diffuse.red() * 0.72 + ambient_base) * light_boost)),
+                        min(255, int((diffuse.green() * 0.72 + ambient_base) * light_boost)),
+                        min(255, int((diffuse.blue() * 0.72 + ambient_base) * light_boost)),
+                    )
+                )
+                material.setDiffuse(diffuse.lighter(int(profile.get("dfm_light", 118))))
+                material.setSpecular(profile["flat_specular"] if self._force_flat_gray_material else QColor(210, 214, 220))
                 if hasattr(material, "setShininess"):
                     material.setShininess(28.0)
                 if hasattr(qt3d_mod, "_disable_backface_culling"):
@@ -1398,6 +1581,7 @@ class FreelancerModelPreviewWidget(QWidget):
             entity.addComponent(material)
             entity.addComponent(transform)
             self._material_refs.append(material)
+            self._add_wireframe_overlay(qt3d, qt3d_mod, geometry)
             return entity
         except Exception:
             return None
@@ -1615,12 +1799,7 @@ class FreelancerModelPreviewWidget(QWidget):
             return
         frame_graph = getattr(self._view3d, "defaultFrameGraph", lambda: None)()
         try:
-            if self._force_flat_gray_material:
-                color = QColor(255, 255, 255) if self._theme_is_light() else QColor(13, 17, 24)
-            elif self._theme_is_light():
-                color = QColor(241, 244, 247)
-            else:
-                color = QColor(13, 17, 24)
+            color = QColor(self._theme_profile()["bg"])
             if frame_graph is not None and hasattr(frame_graph, "setClearColor"):
                 frame_graph.setClearColor(color)
         except Exception:
@@ -1636,6 +1815,7 @@ class FreelancerModelPreviewWidget(QWidget):
         if self._style_update_in_progress:
             return
         dark_theme = not self._theme_is_light()
+        profile = self._theme_profile()
         try:
             accent = self.palette().highlight().color().name()
             subtle_border = self.palette().mid().color().name()
@@ -1648,23 +1828,15 @@ class FreelancerModelPreviewWidget(QWidget):
             title = "transparent"
             meta = "transparent"
             hint = "transparent"
-            status_bg = "#ffffff" if not dark_theme else "rgba(8, 10, 14, 0.96)"
+            status_bg = str(profile["status"])
             viewport_border = "transparent"
         elif self._force_flat_gray_material:
-            if dark_theme:
-                card_bg = "rgba(255, 255, 255, 0.04)"
-                border = subtle_border
-                title = "#eef1f5"
-                meta = "#9aa8b7"
-                hint = "#91a0af"
-                status_bg = "rgba(8, 10, 14, 0.96)"
-            else:
-                card_bg = "rgba(255, 255, 255, 0.98)"
-                border = "#d6d6d6"
-                title = "#202020"
-                meta = "#5f5f5f"
-                hint = "#6b6b6b"
-                status_bg = "#ffffff"
+            card_bg = str(profile["card"])
+            border = str(profile["border"])
+            title = str(profile["title"])
+            meta = str(profile["meta"])
+            hint = str(profile["hint"])
+            status_bg = str(profile["status"])
             viewport_border = border
         elif self._compact_mode:
             card_bg = "transparent"
