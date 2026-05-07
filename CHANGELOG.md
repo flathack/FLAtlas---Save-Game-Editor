@@ -2,6 +2,16 @@
 
 All notable changes to FLAtlas Savegame Editor are documented in this file.
 
+## v0.6.2 - 2026-05-07
+
+### Improvements
+- Moved the Savegame Editor config into its own app-specific config folder.
+- Added migration from the previous shared FL Atlas config location.
+
+### Bug Fixes
+- Fixed updater shutdown handling so the updater can replace the running app more reliably.
+- Removed an orphaned map widget that could sit invisibly over the `Datei` menu.
+
 ## v0.6.1 - 2026-05-06
 
 ### Improvements
