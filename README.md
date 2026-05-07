@@ -38,8 +38,8 @@ Die fertigen Dateien landen in `dist/`.
 
 ## Konfiguration
 
-- Windows: `%APPDATA%\fl_editor\config.json`
-- Linux: `~/.config/fl_editor/config.json`
+- Windows: `%APPDATA%\FLAtlas Savegame Editor\config.json`
+- Linux: `~/.config/flatlas-savegame-editor/config.json`
 
 ## Links
 

@@ -1,10 +1,8 @@
 """Internationalisation helper for FL Atlas.
 
-Translations live in a JSON file with top-level keys ``"de"`` and ``"en"``
-(or any other language codes).  The *bundled* default file is shipped next to
-this module (``translations.json``).  A user-level override is loaded from
-``~/.config/fl_editor/translations.json`` when present – this is the file
-that users are expected to edit.
+Translations live in a bundled JSON file next to this module
+(``translations.json``).  A user-level override is loaded from the
+app-specific user config directory only when it already exists.
 
 Usage::
 
@@ -18,7 +16,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 from pathlib import Path
 from typing import Dict
 
@@ -41,16 +38,11 @@ _current_lang: str = "en"
 def _load_translations() -> None:
     """(Re)load translations from disk.
 
-    The user file takes priority.  If it doesn't exist yet the bundled copy
-    is placed there so users can customise it.
+    The bundled translation file is always loaded.  A user file takes priority
+    only when it already exists; the Savegame Editor must not create or copy
+    FL Atlas V1 translation files into its own config directory.
     """
     global _translations
-
-    # Ensure user file exists
-    if not _USER_FILE.exists():
-        _USER_DIR.mkdir(parents=True, exist_ok=True)
-        if _BUNDLED_FILE.exists():
-            shutil.copy2(_BUNDLED_FILE, _USER_FILE)
 
     bundled_data: Dict[str, Dict[str, str]] = {}
     user_data: Dict[str, Dict[str, str]] = {}

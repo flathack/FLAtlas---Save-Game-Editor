@@ -1,4 +1,4 @@
-"""User-specific writable paths for FL Atlas editor data."""
+"""User-specific writable paths for FLAtlas Savegame Editor data."""
 
 from __future__ import annotations
 
@@ -20,16 +20,16 @@ def user_config_dir() -> Path:
     """Return a writable directory for user config/state files.
 
     Preference order:
-    1) Windows `%APPDATA%\\fl_editor` (if available)
-    2) POSIX-style `~/.config/fl_editor`
-    3) `~/.fl_editor`
+    1) Windows `%APPDATA%\\FLAtlas Savegame Editor` (if available)
+    2) POSIX-style `~/.config/flatlas-savegame-editor`
+    3) `~/.flatlas-savegame-editor`
     """
     candidates: list[Path] = []
     appdata = str(os.environ.get("APPDATA", "") or "").strip()
     if appdata:
-        candidates.append(Path(appdata) / "fl_editor")
-    candidates.append(Path.home() / ".config" / "fl_editor")
-    candidates.append(Path.home() / ".fl_editor")
+        candidates.append(Path(appdata) / "FLAtlas Savegame Editor")
+    candidates.append(Path.home() / ".config" / "flatlas-savegame-editor")
+    candidates.append(Path.home() / ".flatlas-savegame-editor")
 
     for path in candidates:
         try:
