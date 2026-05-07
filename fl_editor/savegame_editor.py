@@ -753,7 +753,26 @@ def _start_frozen_windows_self_update(parent: QWidget | None, info: dict[str, ob
         )
         return
 
-    QTimer.singleShot(150, QApplication.instance().quit)
+    def _quit_for_update() -> None:
+        app = QApplication.instance()
+        try:
+            if parent is not None:
+                parent.close()
+        except Exception:
+            pass
+        if app is not None:
+            try:
+                for widget in list(app.topLevelWidgets()):
+                    widget.close()
+            except Exception:
+                pass
+            try:
+                app.quit()
+            except Exception:
+                pass
+        QTimer.singleShot(1800, lambda: os._exit(0))
+
+    QTimer.singleShot(150, _quit_for_update)
 
 
 def _show_release_status_dialog(

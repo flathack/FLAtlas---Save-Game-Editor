@@ -24,6 +24,8 @@ from pathlib import Path
 
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 DETACHED_PROCESS = getattr(subprocess, "DETACHED_PROCESS", 0)
+MB_TOPMOST = 0x00040000
+MB_SETFOREGROUND = 0x00010000
 
 
 # ---------------------------------------------------------------------------
@@ -34,31 +36,57 @@ def _message_box(text: str, title: str = "FLAtlas Savegame Editor Update", flags
     """Show a Win32 MessageBox (best-effort, silent fail on non-Windows)."""
     try:
         import ctypes
-        ctypes.windll.user32.MessageBoxW(None, str(text), str(title), int(flags))
+        ctypes.windll.user32.MessageBoxW(None, str(text), str(title), int(flags) | MB_TOPMOST | MB_SETFOREGROUND)
     except Exception:
         pass
 
 
-def _wait_for_pid(pid: int, timeout_seconds: float) -> None:
-    """Block until *pid* disappears from the process list (or timeout)."""
+def _pid_exists(pid: int) -> bool:
     if pid <= 0:
-        return
+        return False
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {int(pid)}", "/FO", "CSV", "/NH"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=CREATE_NO_WINDOW,
+            timeout=5,
+        )
+        output = ((result.stdout or "") + "\n" + (result.stderr or "")).lower()
+        if "no tasks" in output or "keine aufgaben" in output:
+            return False
+        return f'"{int(pid)}"' in output or f",{int(pid)}," in output or f" {int(pid)} " in output
+    except Exception:
+        return False
+
+
+def _wait_for_pid(pid: int, timeout_seconds: float) -> bool:
+    """Block until *pid* disappears from the process list. Return True when gone."""
+    if pid <= 0:
+        return True
     deadline = time.time() + max(1.0, float(timeout_seconds))
     while time.time() < deadline:
-        try:
-            result = subprocess.run(
-                ["tasklist", "/FI", f"PID eq {int(pid)}"],
-                capture_output=True,
-                text=True,
-                creationflags=CREATE_NO_WINDOW,
-                timeout=5,
-            )
-            output = (result.stdout or "") + "\n" + (result.stderr or "")
-            if f" {int(pid)} " not in output and f",{int(pid)}" not in output:
-                return
-        except Exception:
-            pass
+        if not _pid_exists(pid):
+            return True
         time.sleep(0.5)
+    return not _pid_exists(pid)
+
+
+def _terminate_pid_tree(pid: int) -> None:
+    if pid <= 0 or not _pid_exists(pid):
+        return
+    try:
+        subprocess.run(
+            ["taskkill", "/PID", str(int(pid)), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=CREATE_NO_WINDOW,
+            timeout=15,
+        )
+    except Exception:
+        pass
 
 
 def _resolve_source_root(extract_root: Path) -> Path:
@@ -145,7 +173,10 @@ def main(argv: list[str] | None = None) -> int:
     archive_path = Path(args.archive_path).resolve()
     exe_path = Path(args.exe_path).resolve()
 
-    _wait_for_pid(int(args.wait_pid), 90.0)
+    wait_pid = int(args.wait_pid)
+    if not _wait_for_pid(wait_pid, 12.0):
+        _terminate_pid_tree(wait_pid)
+        _wait_for_pid(wait_pid, 30.0)
     time.sleep(0.8)
 
     try:
