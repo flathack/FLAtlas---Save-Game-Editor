@@ -3098,7 +3098,6 @@ def open_savegame_editor(self):
     sidebar_l.setContentsMargins(0, 0, 0, 0)
     sidebar_l.setSpacing(5)
     right_tabs = QTabWidget(dlg)
-    tab_locked = QWidget(dlg)
     tab_visited = QWidget(dlg)
     tab_reputation = QWidget(dlg)
     tab_trent = QWidget(dlg)
@@ -3195,8 +3194,6 @@ def open_savegame_editor(self):
     sidebar_l.addWidget(sidebar_ship_preview)
     sidebar_l.addStretch(1)
 
-    locked_scene = QGraphicsScene(tab_locked)
-    locked_view = _SavegameKnownMapView(locked_scene, tab_locked)
     visited_map_l = QVBoxLayout(tab_visited)
     visited_map_l.setContentsMargins(0, 0, 0, 0)
     visited_map_l.setSpacing(5)

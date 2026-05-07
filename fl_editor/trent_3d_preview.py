@@ -1077,8 +1077,9 @@ class FreelancerModelPreviewWidget(QWidget):
         self._container.setMouseTracking(True)
         self._container.installEventFilter(self)
         self._card_layout.insertWidget(3, self._container, 1)
-        self._status_label.hide()
-        self._reset_btn.setVisible(True)
+        self._container.hide()
+        self._status_label.show()
+        self._reset_btn.setVisible(False)
 
         self._root = qt3d.QEntity3D()
         self._light_refs: list[object] = []
@@ -1105,6 +1106,7 @@ class FreelancerModelPreviewWidget(QWidget):
         self._apply_background_color()
         self._apply_light_profile()
         self._meta_label.setText("Ready for Freelancer model data")
+        self._show_status("No model selected")
 
     def set_model_path(self, model_path: Path | None, *, caption: str = "") -> None:
         self.set_model_paths([model_path] if model_path is not None else [], caption=caption)
@@ -1424,6 +1426,7 @@ class FreelancerModelPreviewWidget(QWidget):
         self._status_label.hide()
         if self._container is not None:
             self._container.show()
+        self._reset_btn.setVisible(True)
 
     def _build_geometry_entity(self, qt3d_mod, scene_mod, scene_data, geometry, *, component_index: int = 0):
         try:
@@ -1672,6 +1675,7 @@ class FreelancerModelPreviewWidget(QWidget):
             self._container.hide()
         self._status_label.setText(text)
         self._status_label.show()
+        self._reset_btn.setVisible(False)
 
     def _event_position_xy(self, event) -> tuple[float, float]:
         try:
