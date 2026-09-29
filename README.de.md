@@ -13,10 +13,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/flathack/FLAtlas---Save-Game-Editor/releases/tag/v0.9.3">
-    <img alt="Aktuelles Release" src="https://img.shields.io/badge/Aktuelles%20Release-v0.9.3-00d5ff?style=for-the-badge">
+  <a href="https://github.com/flathack/FLAtlas---Save-Game-Editor/releases/tag/v0.9.6">
+    <img alt="Aktuelles Release" src="https://img.shields.io/badge/Aktuelles%20Release-v0.9.6-00d5ff?style=for-the-badge">
   </a>
-  <a href="https://github.com/flathack/FLAtlas---Save-Game-Editor/releases/download/v0.9.3/FLAtlas-Savegame-Editor-v0.9.3-windows-x64.zip">
+  <a href="https://github.com/flathack/FLAtlas---Save-Game-Editor/releases/download/v0.9.6/FLAtlas-Savegame-Editor-v0.9.6-windows-x64.zip">
     <img alt="Windows x64 herunterladen" src="https://img.shields.io/badge/Download-Windows%20x64-1f8cff?style=for-the-badge">
   </a>
   <a href="https://www.moddb.com/games/freelancer/downloads/flatlas-savegame-editor">
@@ -32,9 +32,9 @@
 
 | Build | Geeignet für | Download |
 | --- | --- | --- |
-| **Windows x64** | Die meisten Windows-PCs | [FLAtlas-Savegame-Editor-v0.9.3-windows-x64.zip](https://github.com/flathack/FLAtlas---Save-Game-Editor/releases/download/v0.9.3/FLAtlas-Savegame-Editor-v0.9.3-windows-x64.zip) |
-| **Windows ARM64** | Windows-Geräte mit ARM-Prozessor | [FLAtlas-Savegame-Editor-v0.9.3-windows-arm64.zip](https://github.com/flathack/FLAtlas---Save-Game-Editor/releases/download/v0.9.3/FLAtlas-Savegame-Editor-v0.9.3-windows-arm64.zip) |
-| **Release-Seite** | Changelog, Prüfsummen und ältere Builds | [GitHub Releases](https://github.com/flathack/FLAtlas---Save-Game-Editor/releases/tag/v0.9.3) |
+| **Windows x64** | Die meisten Windows-PCs | [FLAtlas-Savegame-Editor-v0.9.6-windows-x64.zip](https://github.com/flathack/FLAtlas---Save-Game-Editor/releases/download/v0.9.6/FLAtlas-Savegame-Editor-v0.9.6-windows-x64.zip) |
+| **Windows ARM64** | Windows-Geräte mit ARM-Prozessor | [FLAtlas-Savegame-Editor-v0.9.6-windows-arm64.zip](https://github.com/flathack/FLAtlas---Save-Game-Editor/releases/download/v0.9.6/FLAtlas-Savegame-Editor-v0.9.6-windows-arm64.zip) |
+| **Release-Seite** | Changelog, Prüfsummen und ältere Builds | [GitHub Releases](https://github.com/flathack/FLAtlas---Save-Game-Editor/releases/tag/v0.9.6) |
 | **ModDB-Spiegel** | Freelancer-Community-Downloadseite | [FL Atlas Savegame Editor auf ModDB](https://www.moddb.com/games/freelancer/downloads/flatlas-savegame-editor) |
 
 Lade die ZIP-Datei herunter, entpacke sie in einen Ordner und starte den Editor aus diesem Ordner.
